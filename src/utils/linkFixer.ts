@@ -24,15 +24,16 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import type { LGraph, LGraphNode, LLink } from '@comfyorg/litegraph'
-import type { NodeId } from '@comfyorg/litegraph/dist/LGraphNode'
-import type { SerialisedLLinkArray } from '@comfyorg/litegraph/dist/LLink'
+import type { INodeOutputSlot } from '@/lib/litegraph/src/interfaces'
+import type { NodeId } from '@/lib/litegraph/src/LGraphNode'
+import type { SerialisedLLinkArray } from '@/lib/litegraph/src/LLink'
+import type { LGraph, LGraphNode, LLink } from '@/lib/litegraph/src/litegraph'
 import type {
   ISerialisedGraph,
   ISerialisedNode
-} from '@comfyorg/litegraph/dist/types/serialisation'
+} from '@/lib/litegraph/src/types/serialisation'
 
-export interface BadLinksData<T = ISerialisedGraph | LGraph> {
+interface BadLinksData<T = ISerialisedGraph | LGraph> {
   hasBadLinks: boolean
   fixed: boolean
   graph: T
@@ -70,7 +71,7 @@ function extendLink(link: SerialisedLLinkArray) {
  * makes logical sense. Can apply fixes when passed the `fix` argument as true.
  *
  * Note that fixes are a best-effort attempt. Seems to get it correct in most cases, but there is a
- * chance it correct an anomoly that results in placing an incorrect link (say, if there were two
+ * chance it correct an anomaly that results in placing an incorrect link (say, if there were two
  * links in the data). Users should take care to not overwrite work until manually checking the
  * result.
  */
@@ -79,12 +80,12 @@ export function fixBadLinks(
   options: {
     fix?: boolean
     silent?: boolean
-    logger?: { log: (...args: any[]) => void }
+    logger?: { log: (...args: unknown[]) => void }
   } = {}
 ): BadLinksData {
   const { fix = false, silent = false, logger: _logger = console } = options
   const logger = {
-    log: (...args: any[]) => {
+    log: (...args: unknown[]) => {
       if (!silent) {
         _logger.log(...args)
       }
@@ -166,7 +167,9 @@ export function fixBadLinks(
         patchedNode['outputs']![slot]!['links'].push(linkId)
         if (fix) {
           node.outputs = node.outputs || []
-          node.outputs[slot] = node.outputs[slot] || ({} as any)
+          node.outputs[slot] =
+            node.outputs[slot] ||
+            ({} satisfies Partial<INodeOutputSlot> as INodeOutputSlot)
           node.outputs[slot]!.links = node.outputs[slot]!.links || []
           node.outputs[slot]!.links!.push(linkId)
         }
@@ -428,7 +431,7 @@ export function fixBadLinks(
           (l) =>
             l &&
             (l[0] === data.deletedLinks[i] ||
-              (l as any).id === data.deletedLinks[i])
+              ('id' in l && l.id === data.deletedLinks[i]))
         )
         if (idx === -1) {
           logger.log(`INDEX NOT FOUND for #${data.deletedLinks[i]}`)

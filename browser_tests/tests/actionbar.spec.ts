@@ -7,7 +7,7 @@ import { webSocketFixture } from '../fixtures/ws.ts'
 
 const test = mergeTests(comfyPageFixture, webSocketFixture)
 
-test.describe('Actionbar', () => {
+test.describe('Actionbar', { tag: '@ui' }, () => {
   test.beforeEach(async ({ comfyPage }) => {
     await comfyPage.setSetting('Comfy.UseNewMenu', 'Top')
   })
@@ -29,9 +29,9 @@ test.describe('Actionbar', () => {
 
     // Intercept the prompt queue endpoint
     let promptNumber = 0
-    comfyPage.page.route('**/api/prompt', async (route, req) => {
+    await comfyPage.page.route('**/api/prompt', async (route, req) => {
       await new Promise((r) => setTimeout(r, 100))
-      route.fulfill({
+      await route.fulfill({
         status: 200,
         body: JSON.stringify({
           prompt_id: promptNumber,
@@ -116,9 +116,10 @@ test.describe('Actionbar', () => {
   test('Can dock actionbar into top menu', async ({ comfyPage }) => {
     await comfyPage.page.dragAndDrop(
       '.actionbar .drag-handle',
-      '.comfyui-menu',
+      '.actionbar-container',
       {
-        targetPosition: { x: 0, y: 0 }
+        targetPosition: { x: 50, y: 20 },
+        force: true
       }
     )
     expect(await comfyPage.actionbar.isDocked()).toBe(true)

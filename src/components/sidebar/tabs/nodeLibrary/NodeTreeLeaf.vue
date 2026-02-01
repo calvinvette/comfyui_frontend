@@ -1,6 +1,6 @@
 <template>
   <div ref="container" class="node-lib-node-container">
-    <TreeExplorerTreeNode :node="node">
+    <TreeExplorerTreeNode :node="node" @contextmenu="handleContextMenu">
       <template #before-label>
         <Tag
           v-if="nodeDef.experimental"
@@ -13,47 +13,87 @@
           severity="danger"
         />
       </template>
-      <template #actions>
+      <template v-if="isUserBlueprint" #actions>
+        <Button
+          variant="destructive"
+          size="icon-sm"
+          :aria-label="$t('g.delete')"
+          @click.stop="deleteBlueprint"
+        >
+          <i class="icon-[lucide--trash-2] size-3.5" />
+        </Button>
+        <Button
+          variant="muted-textonly"
+          size="icon-sm"
+          :aria-label="$t('g.edit')"
+          @click.stop="editBlueprint"
+        >
+          <i class="icon-[lucide--square-pen] size-3.5" />
+        </Button>
+      </template>
+      <template v-else #actions>
         <Button
           class="bookmark-button"
-          size="small"
-          :icon="isBookmarked ? 'pi pi-bookmark-fill' : 'pi pi-bookmark'"
-          text
-          severity="secondary"
+          variant="muted-textonly"
+          size="icon-sm"
+          :aria-label="$t('icon.bookmark')"
           @click.stop="toggleBookmark"
-        />
+        >
+          <i
+            :class="
+              cn(
+                isBookmarked ? 'pi pi-bookmark-fill' : 'pi pi-bookmark',
+                'size-3.5'
+              )
+            "
+          />
+        </Button>
+        <Button
+          v-tooltip.bottom="$t('g.learnMore')"
+          class="help-button"
+          variant="muted-textonly"
+          size="icon-sm"
+          :aria-label="$t('g.learnMore')"
+          @click.stop="onHelpClick"
+        >
+          <i class="pi pi-question size-3.5" />
+        </Button>
       </template>
     </TreeExplorerTreeNode>
 
     <teleport v-if="isHovered" to="#node-library-node-preview-container">
       <div class="node-lib-node-preview" :style="nodePreviewStyle">
-        <NodePreview ref="previewRef" :node-def="nodeDef" />
+        <NodePreview :node-def="nodeDef" />
       </div>
     </teleport>
   </div>
+  <ContextMenu ref="menu" :model="menuItems" />
 </template>
 
 <script setup lang="ts">
-import Button from 'primevue/button'
+import ContextMenu from 'primevue/contextmenu'
+import type { MenuItem } from 'primevue/menuitem'
 import Tag from 'primevue/tag'
-import {
-  CSSProperties,
-  computed,
-  nextTick,
-  onMounted,
-  onUnmounted,
-  ref
-} from 'vue'
+import type { CSSProperties } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import TreeExplorerTreeNode from '@/components/common/TreeExplorerTreeNode.vue'
 import NodePreview from '@/components/node/NodePreview.vue'
+import Button from '@/components/ui/button/Button.vue'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { useTelemetry } from '@/platform/telemetry'
 import { useNodeBookmarkStore } from '@/stores/nodeBookmarkStore'
-import { ComfyNodeDefImpl } from '@/stores/nodeDefStore'
-import { useSettingStore } from '@/stores/settingStore'
-import { RenderedTreeExplorerNode } from '@/types/treeExplorerTypes'
+import type { ComfyNodeDefImpl } from '@/stores/nodeDefStore'
+import { useSubgraphStore } from '@/stores/subgraphStore'
+import type { RenderedTreeExplorerNode } from '@/types/treeExplorerTypes'
+import { cn } from '@/utils/tailwindUtil'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   node: RenderedTreeExplorerNode<ComfyNodeDefImpl>
+  openNodeHelp: (nodeDef: ComfyNodeDefImpl) => void
 }>()
 
 // Note: node.data should be present for leaf nodes.
@@ -71,11 +111,55 @@ const toggleBookmark = async () => {
   await nodeBookmarkStore.toggleBookmark(nodeDef.value)
 }
 
-const previewRef = ref<InstanceType<typeof NodePreview> | null>(null)
+const onHelpClick = () => {
+  useTelemetry()?.trackUiButtonClicked({
+    button_id: 'node_library_help_button'
+  })
+  props.openNodeHelp(nodeDef.value)
+}
+const editBlueprint = async () => {
+  if (!props.node.data)
+    throw new Error(
+      'Failed to edit subgraph blueprint lacking backing node data'
+    )
+  await useSubgraphStore().editBlueprint(props.node.data.name)
+}
+const menu = ref<InstanceType<typeof ContextMenu> | null>(null)
+const subgraphStore = useSubgraphStore()
+const isUserBlueprint = computed(() => {
+  const name = nodeDef.value.name
+  if (!name.startsWith(subgraphStore.typePrefix)) return false
+  return !subgraphStore.isGlobalBlueprint(
+    name.slice(subgraphStore.typePrefix.length)
+  )
+})
+const menuItems = computed<MenuItem[]>(() => {
+  if (!isUserBlueprint.value) return []
+
+  return [
+    {
+      label: t('g.delete'),
+      icon: 'pi pi-trash',
+      severity: 'error',
+      command: deleteBlueprint
+    }
+  ]
+})
+function handleContextMenu(event: Event) {
+  if (!isUserBlueprint.value) return
+  menu.value?.show(event)
+}
+function deleteBlueprint() {
+  if (!props.node.data) return
+  void subgraphStore.deleteBlueprint(props.node.data.name)
+}
+
 const nodePreviewStyle = ref<CSSProperties>({
-  position: 'absolute',
+  position: 'fixed',
   top: '0px',
-  left: '0px'
+  left: '0px',
+  pointerEvents: 'none',
+  zIndex: 1001
 })
 
 const handleNodeHover = async () => {
@@ -83,19 +167,15 @@ const handleNodeHover = async () => {
   if (!hoverTarget) return
 
   const targetRect = hoverTarget.getBoundingClientRect()
+  const margin = 40
 
-  const previewHeight = previewRef.value?.$el.offsetHeight || 0
-  const availableSpaceBelow = window.innerHeight - targetRect.bottom
-
-  nodePreviewStyle.value.top =
-    previewHeight > availableSpaceBelow
-      ? `${Math.max(0, targetRect.top - (previewHeight - availableSpaceBelow) - 20)}px`
-      : `${targetRect.top - 40}px`
-  if (sidebarLocation.value === 'left') {
-    nodePreviewStyle.value.left = `${targetRect.right}px`
-  } else {
-    nodePreviewStyle.value.left = `${targetRect.left - 400}px`
-  }
+  nodePreviewStyle.value.top = `${targetRect.top}px`
+  nodePreviewStyle.value.left =
+    sidebarLocation.value === 'left'
+      ? `${targetRect.right + margin}px`
+      : `${targetRect.left - margin}px`
+  nodePreviewStyle.value.transform =
+    sidebarLocation.value === 'right' ? 'translateX(-100%)' : undefined
 }
 
 const container = ref<HTMLElement | null>(null)
@@ -123,6 +203,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@reference '../../../../assets/css/style.css';
+
 .node-lib-node-container {
   @apply h-full w-full;
 }

@@ -1,17 +1,22 @@
+import log from 'loglevel'
+
+import { useExternalLink } from '@/composables/useExternalLink'
 import { PYTHON_MIRROR } from '@/constants/uvMirrors'
 import { t } from '@/i18n'
+import { useToastStore } from '@/platform/updates/common/toastStore'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
 import { app } from '@/scripts/app'
 import { useDialogService } from '@/services/dialogService'
-import { useWorkflowStore } from '@/stores/workflowStore'
+import { checkMirrorReachable } from '@/utils/electronMirrorCheck'
 import { electronAPI as getElectronAPI, isElectron } from '@/utils/envUtil'
-import { checkMirrorReachable } from '@/utils/networkUtil'
-
 ;(async () => {
   if (!isElectron()) return
 
   const electronAPI = getElectronAPI()
   const desktopAppVersion = await electronAPI.getElectronVersion()
   const workflowStore = useWorkflowStore()
+  const toastStore = useToastStore()
+  const { staticUrls, buildDocsUrl } = useExternalLink()
 
   const onChangeRestartApp = (newValue: string, oldValue: string) => {
     // Add a delay to allow changes to take effect before restarting.
@@ -155,7 +160,63 @@ import { checkMirrorReachable } from '@/utils/networkUtil'
         label: 'Desktop User Guide',
         icon: 'pi pi-book',
         function() {
-          window.open('https://comfyorg.notion.site/', '_blank')
+          window.open(
+            buildDocsUrl('/installation/desktop', {
+              includeLocale: true,
+              platform: true
+            }),
+            '_blank'
+          )
+        }
+      },
+      {
+        id: 'Comfy-Desktop.CheckForUpdates',
+        label: 'Check for Updates',
+        icon: 'pi pi-sync',
+        async function() {
+          try {
+            const updateInfo = await electronAPI.checkForUpdates({
+              disableUpdateReadyAction: true
+            })
+
+            if (!updateInfo.isUpdateAvailable) {
+              toastStore.add({
+                severity: 'info',
+                summary: t('desktopUpdate.noUpdateFound'),
+                life: 5_000
+              })
+              return
+            }
+
+            const proceed = await useDialogService().confirm({
+              title: t('desktopUpdate.updateFoundTitle', {
+                version: updateInfo.version
+              }),
+              message: t('desktopUpdate.updateAvailableMessage'),
+              type: 'default'
+            })
+            if (proceed) {
+              try {
+                electronAPI.restartAndInstall()
+              } catch (error) {
+                log.error('Error installing update:', error)
+                toastStore.add({
+                  severity: 'error',
+                  summary: t('g.error'),
+                  detail: t('desktopUpdate.errorInstallingUpdate'),
+                  life: 10_000
+                })
+              }
+            }
+          } catch (error) {
+            log.error('Error checking for updates:', error)
+            toastStore.add({
+              severity: 'error',
+              summary: t('g.error'),
+              detail: t('desktopUpdate.errorCheckingUpdate'),
+              life: 10_000
+            })
+          }
         }
       },
       {
@@ -223,7 +284,7 @@ import { checkMirrorReachable } from '@/utils/networkUtil'
       },
       {
         path: ['Help'],
-        commands: ['Comfy-Desktop.Reinstall']
+        commands: ['Comfy-Desktop.CheckForUpdates', 'Comfy-Desktop.Reinstall']
       }
     ],
 
@@ -240,7 +301,7 @@ import { checkMirrorReachable } from '@/utils/networkUtil'
     aboutPageBadges: [
       {
         label: 'ComfyUI_desktop v' + desktopAppVersion,
-        url: 'https://github.com/Comfy-Org/electron',
+        url: staticUrls.githubElectron,
         icon: 'pi pi-github'
       }
     ]

@@ -1,11 +1,13 @@
-import type { LGraphNode } from '@comfyorg/litegraph'
-
+import type { LGraph, Subgraph } from '@/lib/litegraph/src/litegraph'
 import { formatDate } from '@/utils/formatUtil'
+import { collectAllNodes } from '@/utils/graphTraversalUtil'
 
 export function applyTextReplacements(
-  allNodes: LGraphNode[],
+  graph: LGraph | Subgraph,
   value: string
 ): string {
+  const allNodes = collectAllNodes(graph)
+
   return value.replace(/%([^%]+)%/g, function (match, text) {
     const split = text.split('.')
     if (split.length !== 2) {
@@ -25,7 +27,7 @@ export function applyTextReplacements(
     let nodes = allNodes.filter(
       (n) => n.properties?.['Node name for S&R'] === split[0]
     )
-    // If we cant, see if there is a node with that title
+    // If we can't, see if there is a node with that title
     if (!nodes.length) {
       nodes = allNodes.filter((n) => n.title === split[0])
     }
@@ -45,6 +47,7 @@ export function applyTextReplacements(
       console.warn('Unable to find widget', split[1], 'on node', split[0], node)
       return match
     }
+
     return ((widget.value ?? '') + '').replaceAll(
       // eslint-disable-next-line no-control-regex
       /[/?<>\\:*|"\x00-\x1F\x7F]/g,

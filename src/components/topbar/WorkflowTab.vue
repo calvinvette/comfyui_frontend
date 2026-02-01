@@ -1,39 +1,62 @@
 <template>
-  <div ref="workflowTabRef" class="flex p-2 gap-2 workflow-tab" v-bind="$attrs">
-    <span
-      v-tooltip.bottom="workflowOption.workflow.key"
-      class="workflow-label text-sm max-w-[150px] truncate inline-block"
-    >
+  <div
+    ref="workflowTabRef"
+    class="workflow-tab group flex gap-2 p-2"
+    v-bind="$attrs"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
+    @click="handleClick"
+  >
+    <i
+      v-if="workflowOption.workflow.activeState?.extra?.linearMode"
+      class="icon-[lucide--panels-top-left] bg-primary-background"
+    />
+    <span class="workflow-label inline-block max-w-[150px] truncate text-sm">
       {{ workflowOption.workflow.filename }}
     </span>
     <div class="relative">
-      <span v-if="shouldShowStatusIndicator" class="status-indicator">•</span>
+      <span
+        v-if="shouldShowStatusIndicator"
+        class="absolute top-1/2 left-1/2 z-10 w-4 -translate-1/2 bg-(--comfy-menu-bg) text-2xl font-bold group-hover:hidden"
+        >•</span
+      >
       <Button
-        class="close-button p-0 w-auto"
-        icon="pi pi-times"
-        text
-        severity="secondary"
-        size="small"
+        class="close-button invisible w-auto p-0"
+        variant="muted-textonly"
+        size="icon-sm"
+        :aria-label="t('g.close')"
         @click.stop="onCloseWorkflow(workflowOption)"
-      />
+      >
+        <i class="pi pi-times" />
+      </Button>
     </div>
   </div>
+
+  <WorkflowTabPopover
+    ref="popoverRef"
+    :workflow-filename="workflowOption.workflow.filename"
+    :thumbnail-url="thumbnailUrl"
+    :is-active-tab="isActiveTab"
+  />
 </template>
 
 <script setup lang="ts">
-import Button from 'primevue/button'
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import Button from '@/components/ui/button/Button.vue'
 import {
   usePragmaticDraggable,
   usePragmaticDroppable
 } from '@/composables/usePragmaticDragAndDrop'
-import { useWorkflowService } from '@/services/workflowService'
-import { useSettingStore } from '@/stores/settingStore'
-import { ComfyWorkflow } from '@/stores/workflowStore'
-import { useWorkflowStore } from '@/stores/workflowStore'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { useWorkflowService } from '@/platform/workflow/core/services/workflowService'
+import type { ComfyWorkflow } from '@/platform/workflow/management/stores/workflowStore'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
+import { useWorkflowThumbnail } from '@/renderer/core/thumbnail/useWorkflowThumbnail'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+
+import WorkflowTabPopover from './WorkflowTabPopover.vue'
 
 interface WorkflowOption {
   value: string
@@ -41,7 +64,6 @@ interface WorkflowOption {
 }
 
 const props = defineProps<{
-  class?: string
   workflowOption: WorkflowOption
 }>()
 
@@ -51,6 +73,8 @@ const workspaceStore = useWorkspaceStore()
 const workflowStore = useWorkflowStore()
 const settingStore = useSettingStore()
 const workflowTabRef = ref<HTMLElement | null>(null)
+const popoverRef = ref<InstanceType<typeof WorkflowTabPopover> | null>(null)
+const workflowThumbnail = useWorkflowThumbnail()
 
 // Use computed refs to cache autosave settings
 const autoSaveSetting = computed(() =>
@@ -85,6 +109,27 @@ const shouldShowStatusIndicator = computed(() => {
   // Default: do not show the status indicator. This should not be reachable.
   return false
 })
+
+const isActiveTab = computed(() => {
+  return workflowStore.activeWorkflow?.key === props.workflowOption.workflow.key
+})
+
+const thumbnailUrl = computed(() => {
+  return workflowThumbnail.getThumbnail(props.workflowOption.workflow.key)
+})
+
+// Event handlers that delegate to the popover component
+const handleMouseEnter = (event: Event) => {
+  popoverRef.value?.showPopover(event)
+}
+
+const handleMouseLeave = () => {
+  popoverRef.value?.hidePopover()
+}
+
+const handleClick = (event: Event) => {
+  popoverRef.value?.togglePopover(event)
+}
 
 const closeWorkflows = async (options: WorkflowOption[]) => {
   for (const opt of options) {
@@ -131,14 +176,14 @@ usePragmaticDroppable(tabGetter, {
     }
   }
 })
+
+onUnmounted(() => {
+  popoverRef.value?.hidePopover()
+})
 </script>
 
-<style scoped>
-.status-indicator {
-  @apply absolute font-bold;
-  font-size: 1.5rem;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+<style>
+.p-tooltip.workflow-tab-tooltip {
+  z-index: 1200 !important;
 }
 </style>

@@ -10,11 +10,11 @@
     "tooltip": "デフォルトの pip インストールミラー"
   },
   "Comfy-Desktop_UV_PythonInstallMirror": {
-    "name": "Python Install Mirror",
+    "name": "Pythonインストールミラー",
     "tooltip": "管理されたPythonのインストールは、Astral python-build-standaloneプロジェクトからダウンロードされます。この変数は、Pythonのインストールのための異なるソースを使用するためのミラーURLに設定することができます。提供されたURLは、例えば、https://github.com/astral-sh/python-build-standalone/releases/download/20240713/cpython-3.12.4%2B20240713-aarch64-apple-darwin-install_only.tar.gzの中でhttps://github.com/astral-sh/python-build-standalone/releases/downloadを置き換えます。ディストリビューションは、file:// URLスキームを使用してローカルディレクトリから読み取ることができます。"
   },
   "Comfy-Desktop_UV_TorchInstallMirror": {
-    "name": "Torch Install Mirror",
+    "name": "Torchインストールミラー",
     "tooltip": "pytorchのpipインストールミラー"
   },
   "Comfy-Desktop_WindowStyle": {
@@ -25,8 +25,35 @@
     },
     "tooltip": "システムタイトルバーを非表示にするにはカスタムオプションを選択してください"
   },
+  "Comfy_Canvas_BackgroundImage": {
+    "name": "キャンバス背景画像",
+    "tooltip": "キャンバスの背景画像のURLです。出力パネルで画像を右クリックし、「背景として設定」を選択すると使用できます。"
+  },
+  "Comfy_Canvas_LeftMouseClickBehavior": {
+    "name": "左クリックの動作",
+    "options": {
+      "Panning": "パン（移動）",
+      "Select": "選択"
+    }
+  },
+  "Comfy_Canvas_MouseWheelScroll": {
+    "name": "マウスホイールスクロール",
+    "options": {
+      "Panning": "パン（移動）",
+      "Zoom in/out": "ズームイン/アウト"
+    }
+  },
+  "Comfy_Canvas_NavigationMode": {
+    "name": "キャンバスナビゲーションモード",
+    "options": {
+      "Custom": "カスタム",
+      "Drag Navigation": "ドラッグナビゲーション",
+      "Standard (New)": "標準（新）"
+    }
+  },
   "Comfy_Canvas_SelectionToolbox": {
-    "name": "選択ツールボックスを表示"
+    "name": "選択ツールボックスを表示",
+    "tooltip": "ノードが選択されているときにフローティングツールバーを表示し、よく使う操作に素早くアクセスできます。"
   },
   "Comfy_ConfirmClear": {
     "name": "ワークフローをクリアする際に確認を要求する"
@@ -53,6 +80,17 @@
   "Comfy_EnableWorkflowViewRestore": {
     "name": "ワークフロー内のキャンバスの位置とズームレベルを保存および復元する"
   },
+  "Comfy_Execution_PreviewMethod": {
+    "name": "ライブプレビューメソッド",
+    "options": {
+      "auto": "auto",
+      "default": "default",
+      "latent2rgb": "latent2rgb",
+      "none": "none",
+      "taesd": "taesd"
+    },
+    "tooltip": "画像生成中のライブプレビューメソッド。「default」はサーバーのCLI設定を使用します。"
+  },
   "Comfy_FloatRoundingPrecision": {
     "name": "浮動小数点ウィジェットの丸め小数点数 [0 = 自動]。",
     "tooltip": "(ページの再読み込みが必要)"
@@ -73,6 +111,10 @@
       "Circle": "円",
       "None": "なし"
     }
+  },
+  "Comfy_Graph_LiveSelection": {
+    "name": "ライブ選択",
+    "tooltip": "有効にすると、他のデザインツールのように選択範囲をドラッグする際、ノードがリアルタイムで選択／解除されます。"
   },
   "Comfy_Graph_ZoomSpeed": {
     "name": "キャンバスズーム速度"
@@ -106,7 +148,16 @@
       "Linear": "リニア",
       "Spline": "スプライン",
       "Straight": "ストレート"
-    }
+    },
+    "tooltip": "キャンバス上のノード間の接続リンクの外観と表示を制御します。"
+  },
+  "Comfy_Load3D_3DViewerEnable": {
+    "name": "3Dビューアーを有効化（ベータ）",
+    "tooltip": "選択したノードで3Dビューアー（ベータ）を有効にします。この機能により、フルサイズの3Dビューアー内で3Dモデルを直接可視化し、操作できます。"
+  },
+  "Comfy_Load3D_BackgroundColor": {
+    "name": "初期背景色",
+    "tooltip": "3Dシーンのデフォルト背景色を設定します。この設定は新しい3Dウィジェット作成時の背景の見た目を決定しますが、作成後に各ウィジェットごとに個別に調整できます。"
   },
   "Comfy_Load3D_CameraType": {
     "name": "カメラタイプ",
@@ -116,13 +167,34 @@
     },
     "tooltip": "新しい3Dウィジェットが作成されたときに、デフォルトでカメラが透視投影か平行投影かを制御します。このデフォルトは、作成後に各ウィジェットごとに個別に切り替えることができます。"
   },
+  "Comfy_Load3D_LightAdjustmentIncrement": {
+    "name": "ライト調整増分",
+    "tooltip": "3Dシーンでライトの強度を調整する際の増分サイズを制御します。ステップ値が小さいほど、照明調整をより細かく制御でき、大きい値では1回の調整ごとにより顕著な変化が得られます。"
+  },
+  "Comfy_Load3D_LightIntensity": {
+    "name": "初期ライト強度",
+    "tooltip": "3Dシーン内の照明のデフォルトの明るさレベルを設定します。この値は新しい3Dウィジェット作成時にライトがオブジェクトをどれだけ強く照らすかを決定しますが、作成後に各ウィジェットごとに個別に調整できます。"
+  },
+  "Comfy_Load3D_LightIntensityMaximum": {
+    "name": "最大光度",
+    "tooltip": "3Dシーンで許可される最大光度値を設定します。これは、3Dウィジェットで照明を調整する際に設定できる明るさの上限を定義します。"
+  },
+  "Comfy_Load3D_LightIntensityMinimum": {
+    "name": "光の強度の最小値",
+    "tooltip": "3Dシーンで許可される光の強度の最小値を設定します。これは、3Dウィジェットで照明を調整する際に設定できる明るさの下限を定義します。"
+  },
+  "Comfy_Load3D_PLYEngine": {
+    "name": "PLYエンジン",
+    "options": {
+      "fastply": "fastply",
+      "sparkjs": "sparkjs",
+      "threejs": "threejs"
+    },
+    "tooltip": "PLYファイルを読み込むエンジンを選択します。「threejs」はネイティブのThree.js PLYLoaderを使用します（メッシュPLYファイルに最適）。「fastply」はASCIIポイントクラウドPLYファイル用の最適化されたローダーです。「sparkjs」は3D Gaussian Splatting PLYファイル用のSpark.jsを使用します。"
+  },
   "Comfy_Load3D_ShowGrid": {
     "name": "グリッドを表示",
     "tooltip": "デフォルトでグリッドを表示するには切り替えます"
-  },
-  "Comfy_Load3D_ShowPreview": {
-    "name": "プレビューを表示",
-    "tooltip": "デフォルトでプレビューを表示するには切り替えます"
   },
   "Comfy_Locale": {
     "name": "言語"
@@ -134,10 +206,6 @@
   "Comfy_MaskEditor_UseDominantAxis": {
     "name": "ブラシ調整を優先軸に固定する",
     "tooltip": "有効にすると、ブラシの調整は、どの方向に多く動かすかに基づいて、サイズまたは硬さのいずれかにのみ影響します。"
-  },
-  "Comfy_MaskEditor_UseNewEditor": {
-    "name": "新しいマスクエディタを使用する",
-    "tooltip": "新しいマスクエディタインターフェースに切り替えます。"
   },
   "Comfy_ModelLibrary_AutoLoadAll": {
     "name": "すべてのモデルフォルダーを自動的に読み込む",
@@ -173,6 +241,9 @@
       "Show all": "すべて表示"
     }
   },
+  "Comfy_NodeBadge_ShowApiPricing": {
+    "name": "APIノードの料金バッジを表示"
+  },
   "Comfy_NodeSearchBoxImpl": {
     "name": "ノード検索ボックスの実装",
     "options": {
@@ -203,6 +274,10 @@
   "Comfy_Node_AllowImageSizeDraw": {
     "name": "画像プレビューの下に幅×高さを表示する"
   },
+  "Comfy_Node_AlwaysShowAdvancedWidgets": {
+    "name": "すべてのノードで常に高度なウィジェットを表示",
+    "tooltip": "有効にすると、すべてのノードで高度なウィジェットが個別に展開しなくても常に表示されます。"
+  },
   "Comfy_Node_AutoSnapLinkToSlot": {
     "name": "ノードスロットにリンクを自動スナップ",
     "tooltip": "ノードの上にリンクをドラッグすると、リンクがノードの有効な入力スロットに自動的にスナップします"
@@ -232,6 +307,10 @@
     "name": "スナップハイライトノード",
     "tooltip": "有効な入力スロットを持つノードの上にリンクをドラッグすると、ノードがハイライトされます"
   },
+  "Comfy_Notification_ShowVersionUpdates": {
+    "name": "バージョン更新を表示",
+    "tooltip": "新しいモデルや主要な新機能のアップデートを表示します。"
+  },
   "Comfy_Pointer_ClickBufferTime": {
     "name": "ポインタークリックドリフト遅延",
     "tooltip": "ポインターボタンを押した後、ポインタの動きが無視される最大時間（ミリ秒単位）です。\n\nクリック中にポインタが移動した場合、オブジェクトが意図せず動かされるのを防ぎます。"
@@ -259,6 +338,10 @@
     "name": "キュー履歴サイズ",
     "tooltip": "キュー履歴に表示されるタスクの最大数。"
   },
+  "Comfy_Queue_QPOV2": {
+    "name": "アセットサイドパネルで統一ジョブキューを使用",
+    "tooltip": "フローティングジョブキューパネルを、アセットサイドパネルに埋め込まれた同等のジョブキューに置き換えます。無効にすると、フローティングパネルのレイアウトに戻ります。"
+  },
   "Comfy_Sidebar_Location": {
     "name": "サイドバーの位置",
     "options": {
@@ -273,6 +356,16 @@
       "small": "小"
     }
   },
+  "Comfy_Sidebar_Style": {
+    "name": "サイドバーのスタイル",
+    "options": {
+      "connected": "接続",
+      "floating": "フローティング"
+    }
+  },
+  "Comfy_Sidebar_UnifiedWidth": {
+    "name": "サイドバーの幅を統一"
+  },
   "Comfy_SnapToGrid_GridSize": {
     "name": "グリッドサイズにスナップ",
     "tooltip": "シフトを押しながらノードをドラッグおよびサイズ変更すると、グリッドに整列されます。これにより、そのグリッドのサイズが制御されます。"
@@ -286,20 +379,32 @@
   "Comfy_TreeExplorer_ItemPadding": {
     "name": "ツリーエクスプローラーアイテムのパディング"
   },
+  "Comfy_UI_TabBarLayout": {
+    "name": "タブバーのレイアウト",
+    "options": {
+      "Default": "デフォルト",
+      "Integrated": "統合"
+    },
+    "tooltip": "タブバーのレイアウトを制御します。「統合」を選択すると、ヘルプとユーザーコントロールがタブバーエリアに移動します。"
+  },
   "Comfy_UseNewMenu": {
     "name": "新しいメニューを使用",
     "options": {
-      "Bottom": "下",
       "Disabled": "無効",
       "Top": "上"
-    }
-  },
-  "Comfy_Validation_NodeDefs": {
-    "name": "ノード定義を検証（遅い）",
-    "tooltip": "ノード開発者に推奨されます。これにより、起動時にすべてのノード定義が検証されます。"
+    },
+    "tooltip": "メニューバーの位置。モバイルデバイスでは、メニューは常に上部に表示されます。"
   },
   "Comfy_Validation_Workflows": {
     "name": "ワークフローを検証"
+  },
+  "Comfy_VueNodes_AutoScaleLayout": {
+    "name": "自動スケールレイアウト（Vueノード）",
+    "tooltip": "Vueレンダリングに切り替えた際にノードの重なりを防ぐため、自動的にノード位置をスケーリングします"
+  },
+  "Comfy_VueNodes_Enabled": {
+    "name": "モダンノードデザイン（Vueノード）",
+    "tooltip": "モダン：DOMベースのレンダリングで、操作性の向上、ネイティブブラウザ機能、最新のビジュアルデザインを実現。クラシック：従来のキャンバスレンダリング。"
   },
   "Comfy_WidgetControlMode": {
     "name": "ウィジェット制御モード",
@@ -338,24 +443,30 @@
   "Comfy_Workflow_SortNodeIdOnSave": {
     "name": "ワークフローを保存する際にノードIDをソート"
   },
+  "Comfy_Workflow_WarnBlueprintOverwrite": {
+    "name": "既存のサブグラフブループリントを上書きする際に確認を要求"
+  },
   "Comfy_Workflow_WorkflowTabsPosition": {
     "name": "開いているワークフローの位置",
     "options": {
       "Sidebar": "サイドバー",
-      "Topbar": "トップバー",
-      "Topbar (2nd-row)": "トップバー（2行目）"
+      "Topbar": "トップバー"
     }
-  },
-  "LiteGraph_Canvas_LowQualityRenderingZoomThreshold": {
-    "name": "低品質レンダリングズーム閾値",
-    "tooltip": "ズームアウト時に低品質の形状をレンダリングする"
   },
   "LiteGraph_Canvas_MaximumFps": {
     "name": "最大FPS",
     "tooltip": "キャンバスがレンダリングできる最大フレーム数です。スムーズさの代わりにGPU使用量を制限します。0の場合、画面のリフレッシュレートが使用されます。デフォルト：0"
   },
+  "LiteGraph_Canvas_MinFontSizeForLOD": {
+    "name": "ズームノードの詳細レベル - フォントサイズしきい値",
+    "tooltip": "ノードが低品質LODレンダリングに切り替わるタイミングを制御します。ピクセル単位のフォントサイズを使用して切り替えタイミングを決定します。0に設定すると無効になります。値1-24はLODの最小フォントサイズしきい値を設定します - 値が高いほど(24px) ズームアウト時にノードが簡略化されたレンダリングに早く切り替わり、値が低いほど(1px) 完全なノード品質がより長く維持されます。"
+  },
   "LiteGraph_ContextMenu_Scaling": {
     "name": "ズームイン時にノードコンボウィジェットメニュー（リスト）をスケーリングする"
+  },
+  "LiteGraph_Node_DefaultPadding": {
+    "name": "新しいノードを常に縮小",
+    "tooltip": "ノード作成時に可能な限り小さいサイズにリサイズします。無効にすると、新しく追加されたノードはウィジェットの値が表示されるように少し幅広くなります。"
   },
   "LiteGraph_Node_TooltipDelay": {
     "name": "ツールチップ遅延"
@@ -365,6 +476,7 @@
     "tooltip": "リルート中心点からのベジエ制御点のオフセット"
   },
   "pysssss_SnapToGrid": {
-    "name": "常にグリッドにスナップ"
+    "name": "常にグリッドにスナップ",
+    "tooltip": "有効にすると、ノードを移動またはサイズ変更した際に自動的にグリッドに揃えます。"
   }
 }

@@ -1,16 +1,22 @@
-import { LGraphCanvas, LiteGraph } from '@comfyorg/litegraph'
-import { LGraphNode } from '@comfyorg/litegraph'
+import _ from 'es-toolkit/compat'
 import * as jsondiffpatch from 'jsondiffpatch'
-import _ from 'lodash'
 import log from 'loglevel'
 
+import type { CanvasPointerEvent } from '@/lib/litegraph/src/litegraph'
+import { LGraphCanvas, LiteGraph } from '@/lib/litegraph/src/litegraph'
+import {
+  ComfyWorkflow,
+  useWorkflowStore
+} from '@/platform/workflow/management/stores/workflowStore'
+import type { ComfyWorkflowJSON } from '@/platform/workflow/validation/schemas/workflowSchema'
 import type { ExecutedWsMessage } from '@/schemas/apiSchema'
-import type { ComfyWorkflowJSON } from '@/schemas/comfyWorkflowSchema'
 import { useExecutionStore } from '@/stores/executionStore'
-import { ComfyWorkflow, useWorkflowStore } from '@/stores/workflowStore'
+import { useNodeOutputStore } from '@/stores/imagePreviewStore'
+import { useSubgraphNavigationStore } from '@/stores/subgraphNavigationStore'
 
 import { api } from './api'
 import type { ComfyApp } from './app'
+import { app } from './app'
 
 function clone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
@@ -32,14 +38,13 @@ export class ChangeTracker {
   /**
    * Whether the redo/undo restoring is in progress.
    */
-  private restoringState: boolean = false
+  _restoringState: boolean = false
 
   ds?: { scale: number; offset: [number, number] }
-  nodeOutputs?: Record<string, any>
+  nodeOutputs?: Record<string, ExecutedWsMessage['output']>
 
-  static app?: ComfyApp
-  get app(): ComfyApp {
-    return ChangeTracker.app!
+  private subgraphState?: {
+    navigation: string[]
   }
 
   constructor(
@@ -60,7 +65,7 @@ export class ChangeTracker {
    */
   reset(state?: ComfyWorkflowJSON) {
     // Do not reset the state if we are restoring.
-    if (this.restoringState) return
+    if (this._restoringState) return
 
     logger.debug('Reset State')
     if (state) this.activeState = clone(state)
@@ -69,18 +74,37 @@ export class ChangeTracker {
 
   store() {
     this.ds = {
-      scale: this.app.canvas.ds.scale,
-      offset: [this.app.canvas.ds.offset[0], this.app.canvas.ds.offset[1]]
+      scale: app.canvas.ds.scale,
+      offset: [app.canvas.ds.offset[0], app.canvas.ds.offset[1]]
     }
+    const navigation = useSubgraphNavigationStore().exportState()
+    // Always store the navigation state, even if empty (root level)
+    this.subgraphState = { navigation }
   }
 
   restore() {
     if (this.ds) {
-      this.app.canvas.ds.scale = this.ds.scale
-      this.app.canvas.ds.offset = this.ds.offset
+      app.canvas.ds.scale = this.ds.scale
+      app.canvas.ds.offset = this.ds.offset
     }
     if (this.nodeOutputs) {
-      this.app.nodeOutputs = this.nodeOutputs
+      useNodeOutputStore().restoreOutputs(this.nodeOutputs)
+    }
+    if (this.subgraphState) {
+      const { navigation } = this.subgraphState
+      useSubgraphNavigationStore().restoreState(navigation)
+
+      const activeId = navigation.at(-1)
+      if (activeId) {
+        // Navigate to the saved subgraph
+        const subgraph = app.rootGraph.subgraphs.get(activeId)
+        if (subgraph) {
+          app.canvas.setGraph(subgraph)
+        }
+      } else {
+        // Empty navigation array means root level
+        app.canvas.setGraph(app.rootGraph)
+      }
     }
   }
 
@@ -106,10 +130,8 @@ export class ChangeTracker {
   }
 
   checkState() {
-    if (!this.app.graph || this.changeCount) return
-    // @ts-expect-error zod type issue on ComfyWorkflowJSON. ComfyWorkflowJSON
-    // is stricter than LiteGraph's serialisation schema.
-    const currentState = clone(this.app.graph.serialize()) as ComfyWorkflowJSON
+    if (!app.graph || this.changeCount) return
+    const currentState = clone(app.rootGraph.serialize()) as ComfyWorkflowJSON
     if (!this.activeState) {
       this.activeState = currentState
       return
@@ -131,9 +153,9 @@ export class ChangeTracker {
     const prevState = source.pop()
     if (prevState) {
       target.push(this.activeState)
-      this.restoringState = true
+      this._restoringState = true
       try {
-        await this.app.loadGraphData(prevState, false, false, this.workflow, {
+        await app.loadGraphData(prevState, false, false, this.workflow, {
           showMissingModelsDialog: false,
           showMissingNodesDialog: false,
           checkForRerouteMigration: false
@@ -141,7 +163,7 @@ export class ChangeTracker {
         this.activeState = prevState
         this.updateModified()
       } finally {
-        this.restoringState = false
+        this._restoringState = false
       }
     }
   }
@@ -190,12 +212,10 @@ export class ChangeTracker {
     }
   }
 
-  static init(app: ComfyApp) {
+  static init() {
     const getCurrentChangeTracker = () =>
       useWorkflowStore().activeWorkflow?.changeTracker
     const checkState = () => getCurrentChangeTracker()?.checkState()
-
-    ChangeTracker.app = app
 
     let keyIgnored = false
     window.addEventListener(
@@ -204,6 +224,10 @@ export class ChangeTracker {
         // Do not trigger on repeat events (Holding down a key)
         // This can happen when user is holding down "Space" to pan the canvas.
         if (e.repeat) return
+
+        // If the mask editor is opened, we don't want to trigger on key events
+        const comfyApp = app.constructor as typeof ComfyApp
+        if (comfyApp.maskeditor_is_opended?.()) return
 
         const activeEl = document.activeElement
         requestAnimationFrame(async () => {
@@ -234,7 +258,7 @@ export class ChangeTracker {
           if (await changeTracker.undoRedo(e)) return
 
           // If our active element is some type of input then handle changes after they're done
-          if (ChangeTracker.bindInput(app, bindInputEl)) return
+          if (ChangeTracker.bindInput(bindInputEl)) return
           logger.debug('checkState on keydown')
           changeTracker.checkState()
         })
@@ -275,23 +299,16 @@ export class ChangeTracker {
       checkState()
       return v
     }
-    const processMouseDown = LGraphCanvas.prototype.processMouseDown
-    LGraphCanvas.prototype.processMouseDown = function (e) {
-      const v = processMouseDown.apply(this, [e])
-      logger.debug('checkState on processMouseDown')
-      checkState()
-      return v
-    }
 
     // Handle litegraph dialog popup for number/string widgets
     const prompt = LGraphCanvas.prototype.prompt
     LGraphCanvas.prototype.prompt = function (
       title: string,
-      value: any,
-      callback: (v: any) => void,
-      event: any
+      value: string | number,
+      callback: (v: string) => void,
+      event: CanvasPointerEvent
     ) {
-      const extendedCallback = (v: any) => {
+      const extendedCallback = (v: string) => {
         callback(v)
         checkState()
       }
@@ -305,17 +322,6 @@ export class ChangeTracker {
       const v = close.apply(this, [e])
       logger.debug('checkState on contextMenuClose')
       checkState()
-      return v
-    }
-
-    // Detects nodes being added via the node search dialog
-    const onNodeAdded = LiteGraph.LGraph.prototype.onNodeAdded
-    LiteGraph.LGraph.prototype.onNodeAdded = function (node: LGraphNode) {
-      const v = onNodeAdded?.apply(this, [node])
-      if (!app?.configuringGraph) {
-        logger.debug('checkState on onNodeAdded')
-        checkState()
-      }
       return v
     }
 
@@ -354,7 +360,7 @@ export class ChangeTracker {
     })
   }
 
-  static bindInput(_app: ComfyApp, activeEl: Element | null): boolean {
+  static bindInput(activeEl: Element | null): boolean {
     if (
       !activeEl ||
       activeEl.tagName === 'CANVAS' ||
@@ -399,7 +405,14 @@ export class ChangeTracker {
         return false
 
       // Compare other properties normally
-      for (const key of ['links', 'floatingLinks', 'reroutes', 'groups']) {
+      for (const key of [
+        'links',
+        'floatingLinks',
+        'reroutes',
+        'groups',
+        'definitions',
+        'subgraphs'
+      ]) {
         if (!_.isEqual(a[key], b[key])) {
           return false
         }
@@ -415,7 +428,12 @@ export class ChangeTracker {
     function sortGraphNodes(graph: ComfyWorkflowJSON) {
       return {
         links: graph.links,
+        floatingLinks: graph.floatingLinks,
+        reroutes: graph.reroutes,
         groups: graph.groups,
+        extra: graph.extra,
+        definitions: graph.definitions,
+        subgraphs: graph.subgraphs,
         nodes: graph.nodes.sort((a, b) => {
           if (typeof a.id === 'number' && typeof b.id === 'number') {
             return a.id - b.id

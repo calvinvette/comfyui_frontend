@@ -1,38 +1,34 @@
-import { LGraphNode, LiteGraph } from '@comfyorg/litegraph'
+import { useChainCallback } from '@/composables/functional/useChainCallback'
+import { LGraphNode, LiteGraph } from '@/lib/litegraph/src/litegraph'
 import type {
   INodeInputSlot,
   INodeOutputSlot,
   ISlotType,
-  IWidget,
-  LLink,
-  Vector2
-} from '@comfyorg/litegraph'
-import type { CanvasMouseEvent } from '@comfyorg/litegraph/dist/types/events'
-
-import { useChainCallback } from '@/composables/functional/useChainCallback'
+  LLink
+} from '@/lib/litegraph/src/litegraph'
+import { NodeSlot } from '@/lib/litegraph/src/node/NodeSlot'
+import type { CanvasPointerEvent } from '@/lib/litegraph/src/types/events'
+import type {
+  IBaseWidget,
+  TWidgetValue
+} from '@/lib/litegraph/src/types/widgets'
 import type { InputSpec } from '@/schemas/nodeDefSchema'
 import { app } from '@/scripts/app'
-import { ComfyWidgets, addValueControlWidgets } from '@/scripts/widgets'
+import {
+  ComfyWidgets,
+  addValueControlWidgets,
+  isValidWidgetType
+} from '@/scripts/widgets'
 import { CONFIG, GET_CONFIG } from '@/services/litegraphService'
 import { mergeInputSpec } from '@/utils/nodeDefUtil'
 import { applyTextReplacements } from '@/utils/searchAndReplace'
-import { isPrimitiveNode } from '@/utils/typeGuardUtil'
-
-const VALID_TYPES = [
-  'STRING',
-  'combo',
-  'number',
-  'toggle',
-  'BOOLEAN',
-  'text',
-  'string'
-]
+import { isPrimitiveNode } from '@/renderer/utils/nodeTypeGuards'
 
 const replacePropertyName = 'Run widget replace on values'
 export class PrimitiveNode extends LGraphNode {
-  controlValues?: any[]
+  controlValues?: TWidgetValue[]
   lastType?: string
-  static category: string
+  static override category: string
   constructor(title: string) {
     super(title)
     this.addOutput('connect to widget input', '*')
@@ -44,48 +40,53 @@ export class PrimitiveNode extends LGraphNode {
     }
   }
 
-  applyToGraph(extraLinks: LLink[] = []) {
-    if (!this.outputs[0].links?.length) return
+  override applyToGraph(extraLinks: LLink[] = []) {
+    if (!this.outputs[0].links?.length || !this.graph) return
 
-    let links = [
-      ...this.outputs[0].links.map((l) => app.graph.links[l]),
+    const links = [
+      ...this.outputs[0].links.map((l) => this.graph!.links[l]),
       ...extraLinks
     ]
     let v = this.widgets?.[0].value
     if (v && this.properties[replacePropertyName]) {
-      v = applyTextReplacements(app.graph.nodes, v as string)
+      v = applyTextReplacements(this.graph, v as string)
     }
 
     // For each output link copy our value over the original widget value
     for (const linkInfo of links) {
-      // @ts-expect-error fixme ts strict error
-      const node = this.graph.getNodeById(linkInfo.target_id)
-      // @ts-expect-error fixme ts strict error
-      const input = node.inputs[linkInfo.target_slot]
-      let widget: IWidget | undefined
-      const widgetName = (input.widget as { name: string }).name
-      if (widgetName) {
-        // @ts-expect-error fixme ts strict error
-        widget = node.widgets.find((w) => w.name === widgetName)
+      const node = this.graph?.getNodeById(linkInfo.target_id)
+      const input = node?.inputs[linkInfo.target_slot]
+      if (!input) {
+        console.warn('Unable to resolve node or input for link', linkInfo)
+        continue
       }
 
-      if (widget) {
-        widget.value = v
-        if (widget.callback) {
-          widget.callback(
-            widget.value,
-            app.canvas,
-            // @ts-expect-error fixme ts strict error
-            node,
-            app.canvas.graph_mouse,
-            {} as CanvasMouseEvent
-          )
-        }
+      const widgetName = input.widget?.name
+      if (!widgetName) {
+        console.warn('Invalid widget or widget name', input.widget)
+        continue
       }
+
+      const widget = node.widgets?.find((w) => w.name === widgetName)
+      if (!widget) {
+        console.warn(
+          `Unable to find widget "${widgetName}" on node [${node.id}]`
+        )
+        continue
+      }
+
+      widget.value = v
+      widget.callback?.(
+        widget.value,
+        app.canvas,
+        node,
+        app.canvas.graph_mouse,
+        {} as CanvasPointerEvent
+      )
     }
   }
 
-  refreshComboInNode() {
+  override refreshComboInNode() {
     const widget = this.widgets?.[0]
     if (widget?.type === 'combo') {
       // @ts-expect-error fixme ts strict error
@@ -100,9 +101,9 @@ export class PrimitiveNode extends LGraphNode {
     }
   }
 
-  onAfterGraphConfigured() {
+  override onAfterGraphConfigured() {
     if (this.outputs[0].links?.length && !this.widgets?.length) {
-      this.#onFirstConnection()
+      this._onFirstConnection()
 
       // Populate widget values from config data
       if (this.widgets && this.widgets_values) {
@@ -115,11 +116,15 @@ export class PrimitiveNode extends LGraphNode {
       }
 
       // Merge values if required
-      this.#mergeWidgetConfig()
+      this._mergeWidgetConfig()
     }
   }
 
-  onConnectionsChange(_type: ISlotType, _index: number, connected: boolean) {
+  override onConnectionsChange(
+    _type: ISlotType,
+    _index: number,
+    connected: boolean
+  ) {
     if (app.configuringGraph) {
       // Dont run while the graph is still setting up
       return
@@ -128,11 +133,11 @@ export class PrimitiveNode extends LGraphNode {
     const links = this.outputs[0].links
     if (connected) {
       if (links?.length && !this.widgets?.length) {
-        this.#onFirstConnection()
+        this._onFirstConnection()
       }
     } else {
       // We may have removed a link that caused the constraints to change
-      this.#mergeWidgetConfig()
+      this._mergeWidgetConfig()
 
       if (!links?.length) {
         this.onLastDisconnect()
@@ -140,7 +145,7 @@ export class PrimitiveNode extends LGraphNode {
     }
   }
 
-  onConnectOutput(
+  override onConnectOutput(
     slot: number,
     _type: string,
     input: INodeInputSlot,
@@ -148,13 +153,13 @@ export class PrimitiveNode extends LGraphNode {
     target_slot: number
   ) {
     // Fires before the link is made allowing us to reject it if it isn't valid
-    // No widget, we cant connect
+    // No widget, we can't connect
     if (!input.widget && !(input.type in ComfyWidgets)) {
       return false
     }
 
     if (this.outputs[slot].links?.length) {
-      const valid = this.#isValidConnection(input)
+      const valid = this._isValidConnection(input)
       if (valid) {
         // On connect of additional outputs, copy our value to their widget
         this.applyToGraph([{ target_id: target_node.id, target_slot } as LLink])
@@ -165,18 +170,16 @@ export class PrimitiveNode extends LGraphNode {
     return true
   }
 
-  #onFirstConnection(recreating?: boolean) {
+  private _onFirstConnection(recreating?: boolean) {
     // First connection can fire before the graph is ready on initial load so random things can be missing
-    if (!this.outputs[0].links) {
+    if (!this.outputs[0].links || !this.graph) {
       this.onLastDisconnect()
       return
     }
     const linkId = this.outputs[0].links[0]
-    // @ts-expect-error fixme ts strict error
     const link = this.graph.links[linkId]
     if (!link) return
 
-    // @ts-expect-error fixme ts strict error
     const theirNode = this.graph.getNodeById(link.target_id)
     if (!theirNode || !theirNode.inputs) return
 
@@ -201,7 +204,7 @@ export class PrimitiveNode extends LGraphNode {
     this.outputs[0].name = type
     this.outputs[0].widget = widget
 
-    this.#createWidget(
+    this._createWidget(
       widget[CONFIG] ?? config,
       theirNode,
       widget.name,
@@ -210,7 +213,7 @@ export class PrimitiveNode extends LGraphNode {
     )
   }
 
-  #createWidget(
+  private _createWidget(
     inputData: InputSpec,
     node: LGraphNode,
     widgetName: string,
@@ -224,8 +227,8 @@ export class PrimitiveNode extends LGraphNode {
 
     // Store current size as addWidget resizes the node
     const [oldWidth, oldHeight] = this.size
-    let widget: IWidget | undefined
-    if (type in ComfyWidgets) {
+    let widget: IBaseWidget
+    if (isValidWidgetType(type)) {
       widget = (ComfyWidgets[type](this, 'value', inputData, app) || {}).widget
     } else {
       // @ts-expect-error InputSpec is not typed correctly
@@ -254,6 +257,8 @@ export class PrimitiveNode extends LGraphNode {
         undefined,
         inputData
       )
+      if (this.widgets?.[1]) widget.linkedWidgets = [this.widgets[1]]
+
       let filter = this.widgets_values?.[2]
       if (filter && this.widgets && this.widgets.length === 3) {
         this.widgets[2].value = filter
@@ -302,8 +307,8 @@ export class PrimitiveNode extends LGraphNode {
 
   recreateWidget() {
     const values = this.widgets?.map((w) => w.value)
-    this.#removeWidgets()
-    this.#onFirstConnection(true)
+    this._removeWidgets()
+    this._onFirstConnection(true)
     if (values?.length && this.widgets) {
       for (let i = 0; i < this.widgets.length; i++)
         this.widgets[i].value = values[i]
@@ -311,7 +316,7 @@ export class PrimitiveNode extends LGraphNode {
     return this.widgets?.[0]
   }
 
-  #mergeWidgetConfig() {
+  private _mergeWidgetConfig() {
     // Merge widget configs if the node has multiple outputs
     const output = this.outputs[0]
     const links = output.links ?? []
@@ -332,47 +337,22 @@ export class PrimitiveNode extends LGraphNode {
     const config1 = (output.widget?.[GET_CONFIG] as () => InputSpec)?.()
     if (!config1) return
     const isNumber = config1[0] === 'INT' || config1[0] === 'FLOAT'
-    if (!isNumber) return
+    if (!isNumber || !this.graph) return
 
     for (const linkId of links) {
-      const link = app.graph.links[linkId]
+      const link = this.graph.links[linkId]
       if (!link) continue // Can be null when removing a node
 
-      const theirNode = app.graph.getNodeById(link.target_id)
+      const theirNode = this.graph.getNodeById(link.target_id)
       if (!theirNode) continue
       const theirInput = theirNode.inputs[link.target_slot]
 
       // Call is valid connection so it can merge the configs when validating
-      this.#isValidConnection(theirInput, hasConfig)
+      this._isValidConnection(theirInput, hasConfig)
     }
   }
 
-  isValidWidgetLink(
-    originSlot: number,
-    targetNode: LGraphNode,
-    targetWidget: IWidget
-  ) {
-    const config2 = getConfig.call(targetNode, targetWidget.name) ?? [
-      targetWidget.type,
-      targetWidget.options || {}
-    ]
-    if (!isConvertibleWidget(targetWidget, config2)) return false
-
-    const output = this.outputs[originSlot]
-    if (
-      !(
-        output.widget?.[CONFIG] ??
-        (output.widget?.[GET_CONFIG] as () => InputSpec)?.()
-      )
-    ) {
-      // No widget defined for this primitive yet so allow it
-      return true
-    }
-
-    return !!mergeIfValid.call(this, output, config2)
-  }
-
-  #isValidConnection(input: INodeInputSlot, forceUpdate?: boolean) {
+  private _isValidConnection(input: INodeInputSlot, forceUpdate?: boolean) {
     // Only allow connections where the configs match
     const output = this.outputs?.[0]
     const config2 = (input.widget?.[GET_CONFIG] as () => InputSpec)?.()
@@ -387,7 +367,7 @@ export class PrimitiveNode extends LGraphNode {
     )
   }
 
-  #removeWidgets() {
+  private _removeWidgets() {
     if (this.widgets) {
       // Allow widgets to cleanup
       for (const w of this.widgets) {
@@ -412,13 +392,13 @@ export class PrimitiveNode extends LGraphNode {
   }
 
   onLastDisconnect() {
-    // We cant remove + re-add the output here as if you drag a link over the same link
+    // We can't remove + re-add the output here as if you drag a link over the same link
     // it removes, then re-adds, causing it to break
     this.outputs[0].type = '*'
     this.outputs[0].name = 'connect to widget input'
     delete this.outputs[0].widget
 
-    this.#removeWidgets()
+    this._removeWidgets()
   }
 }
 
@@ -440,23 +420,17 @@ function getConfig(this: LGraphNode, widgetName: string) {
   )
 }
 
-function isConvertibleWidget(widget: IWidget, config: InputSpec): boolean {
-  return (
-    // @ts-expect-error InputSpec is not typed correctly
-    VALID_TYPES.includes(widget.type) || VALID_TYPES.includes(config[0])
-  )
-}
-
 /**
  * Convert a widget to an input slot.
  * @deprecated Widget to socket conversion is no longer necessary, as they co-exist now.
  * @param node The node to convert the widget to an input slot for.
  * @param widget The widget to convert to an input slot.
  * @returns The input slot that was converted from the widget or undefined if the widget is not found.
+ * @knipIgnoreUnusedButUsedByCustomNodes
  */
 export function convertToInput(
   node: LGraphNode,
-  widget: IWidget
+  widget: IBaseWidget
 ): INodeInputSlot | undefined {
   console.warn(
     'Please remove call to convertToInput. Widget to socket conversion is no longer necessary, as they co-exist now.'
@@ -473,10 +447,7 @@ function getWidgetType(config: InputSpec) {
   return { type }
 }
 
-export function setWidgetConfig(
-  slot: INodeInputSlot | INodeOutputSlot,
-  config: InputSpec
-) {
+export function setWidgetConfig(slot: INodeInputSlot, config?: InputSpec) {
   if (!slot.widget) return
   if (config) {
     slot.widget[GET_CONFIG] = () => config
@@ -484,19 +455,18 @@ export function setWidgetConfig(
     delete slot.widget
   }
 
-  if ('link' in slot) {
-    const link = app.graph.links[slot.link ?? -1]
-    if (link) {
-      const originNode = app.graph.getNodeById(link.origin_id)
-      if (originNode && isPrimitiveNode(originNode)) {
-        if (config) {
-          originNode.recreateWidget()
-        } else if (!app.configuringGraph) {
-          originNode.disconnectOutput(0)
-          originNode.onLastDisconnect()
-        }
-      }
-    }
+  if (!(slot instanceof NodeSlot)) return
+  const graph = slot.node.graph
+  if (!graph) return
+  const link = graph.links[slot.link ?? -1]
+  if (!link) return
+  const originNode = graph.getNodeById(link.origin_id)
+  if (!originNode || !isPrimitiveNode(originNode)) return
+  if (config) {
+    originNode.recreateWidget()
+  } else if (!app.configuringGraph) {
+    originNode.disconnectOutput(0)
+    originNode.onLastDisconnect()
   }
 }
 
@@ -536,13 +506,12 @@ export function mergeIfValid(
     }
   }
 
-  // @ts-expect-error fixme ts strict error
-  return { customConfig: customSpec[1] }
+  return { customConfig: customSpec?.[1] ?? {} }
 }
 
 app.registerExtension({
   name: 'Comfy.WidgetInputs',
-  async beforeRegisterNodeDef(nodeType, _nodeData, app) {
+  async beforeRegisterNodeDef(nodeType, _nodeData) {
     // @ts-expect-error adding extra property
     nodeType.prototype.convertWidgetToInput = function (this: LGraphNode) {
       console.warn(
@@ -588,25 +557,13 @@ app.registerExtension({
       }
     )
 
-    function isNodeAtPos(pos: Vector2) {
-      for (const n of app.graph.nodes) {
-        if (n.pos[0] === pos[0] && n.pos[1] === pos[1]) {
-          return true
-        }
-      }
-      return false
-    }
-
     // Double click a widget input to automatically attach a primitive
     const origOnInputDblClick = nodeType.prototype.onInputDblClick
     nodeType.prototype.onInputDblClick = function (
       this: LGraphNode,
-      slot: number
+      ...[slot, ...args]: Parameters<NonNullable<typeof origOnInputDblClick>>
     ) {
-      const r = origOnInputDblClick
-        ? // @ts-expect-error fixme ts strict error
-          origOnInputDblClick.apply(this, arguments)
-        : undefined
+      const r = origOnInputDblClick?.apply(this, [slot, ...args])
 
       const input = this.inputs[slot]
       if (!input.widget) {
@@ -625,18 +582,18 @@ app.registerExtension({
 
       // Create a primitive node
       const node = LiteGraph.createNode('PrimitiveNode')
-      if (!node) return r
+      const graph = app.canvas.graph
+      if (!node || !graph) return r
 
-      app.graph.add(node)
+      graph?.add(node)
 
-      // Calculate a position that wont directly overlap another node
+      // Calculate a position that won't directly overlap another node
       const pos: [number, number] = [
         this.pos[0] - node.size[0] - 30,
         this.pos[1]
       ]
-      while (isNodeAtPos(pos)) {
+      while (graph.getNodeOnPos(pos[0], pos[1], graph.nodes))
         pos[1] += LiteGraph.NODE_TITLE_HEIGHT
-      }
 
       node.pos = pos
       node.connect(0, this, slot)

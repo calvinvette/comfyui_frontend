@@ -8,11 +8,11 @@
         {{ modelDef.file_name }}
       </div>
       <div v-if="modelDef.architecture_id" class="model_preview_architecture">
-        <span class="model_preview_prefix">Architecture: </span>
+        <span class="model_preview_prefix">{{ $t('g.architecture') }}: </span>
         {{ modelDef.architecture_id }}
       </div>
       <div v-if="modelDef.author" class="model_preview_author">
-        <span class="model_preview_prefix">Author: </span>
+        <span class="model_preview_prefix">{{ $t('g.author') }}: </span>
         {{ modelDef.author }}
       </div>
     </div>
@@ -20,15 +20,15 @@
       <img :src="modelDef.image" />
     </div>
     <div v-if="modelDef.usage_hint" class="model_preview_usage_hint">
-      <span class="model_preview_prefix">Usage hint: </span>
+      <span class="model_preview_prefix">{{ $t('g.usageHint') }}: </span>
       {{ modelDef.usage_hint }}
     </div>
     <div v-if="modelDef.trigger_phrase" class="model_preview_trigger_phrase">
-      <span class="model_preview_prefix">Trigger phrase: </span>
+      <span class="model_preview_prefix">{{ $t('g.triggerPhrase') }}: </span>
       {{ modelDef.trigger_phrase }}
     </div>
     <div v-if="modelDef.description" class="model_preview_description">
-      <span class="model_preview_prefix">Description: </span>
+      <span class="model_preview_prefix">{{ $t('g.description') }}: </span>
       {{ modelDef.description }}
     </div>
   </div>
@@ -49,7 +49,6 @@ const modelDef = props.modelDef
 <style scoped>
 .model_preview {
   background-color: var(--comfy-menu-bg);
-  font-family: 'Open Sans', sans-serif;
   color: var(--descrip-text);
   border: 1px solid var(--descrip-text);
   min-width: 300px;
@@ -72,7 +71,7 @@ const modelDef = props.modelDef
   object-fit: contain;
 }
 .model_preview_title {
-  font-weight: bold;
+  font-weight: 700;
   text-align: center;
   font-size: 14px;
 }
@@ -89,6 +88,6 @@ const modelDef = props.modelDef
   font-size: 10px;
 }
 .model_preview_prefix {
-  font-weight: bold;
+  font-weight: 700;
 }
 </style>

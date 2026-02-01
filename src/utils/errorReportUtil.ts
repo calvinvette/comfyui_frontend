@@ -1,7 +1,6 @@
-import type { ISerialisedGraph } from '@comfyorg/litegraph'
-
+import type { ISerialisedGraph } from '@/lib/litegraph/src/litegraph'
+import type { NodeId } from '@/platform/workflow/validation/schemas/workflowSchema'
 import type { SystemStats } from '@/schemas/apiSchema'
-import type { NodeId } from '@/schemas/comfyWorkflowSchema'
 
 export interface ErrorReportData {
   exceptionType: string
@@ -67,7 +66,7 @@ ${systemStats.devices
   .join('\n')}
 ## Logs
 \`\`\`
-${error.serverLogs}
+${typeof error.serverLogs === 'string' ? error.serverLogs : JSON.stringify(error.serverLogs, null, 2)}
 \`\`\`
 ## Attached Workflow
 Please make sure that workflow does not contain any sensitive information such as API keys or passwords.

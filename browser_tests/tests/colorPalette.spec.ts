@@ -3,6 +3,10 @@ import { expect } from '@playwright/test'
 import type { Palette } from '../../src/schemas/colorPaletteSchema'
 import { comfyPageFixture as test } from '../fixtures/ComfyPage'
 
+test.beforeEach(async ({ comfyPage }) => {
+  await comfyPage.setSetting('Comfy.UseNewMenu', 'Disabled')
+})
+
 const customColorPalettes: Record<string, Palette> = {
   obsidian: {
     version: 102,
@@ -48,6 +52,7 @@ const customColorPalettes: Record<string, Palette> = {
         WIDGET_OUTLINE_COLOR: '#333',
         WIDGET_TEXT_COLOR: '#a3a3a8',
         WIDGET_SECONDARY_TEXT_COLOR: '#97979c',
+        WIDGET_DISABLED_TEXT_COLOR: '#646464',
         LINK_COLOR: '#9A9',
         EVENT_LINK_COLOR: '#A86',
         CONNECTING_LINK_COLOR: '#AFA'
@@ -111,6 +116,7 @@ const customColorPalettes: Record<string, Palette> = {
         WIDGET_OUTLINE_COLOR: '#333',
         WIDGET_TEXT_COLOR: '#a3a3a8',
         WIDGET_SECONDARY_TEXT_COLOR: '#97979c',
+        WIDGET_DISABLED_TEXT_COLOR: '#646464',
         LINK_COLOR: '#9A9',
         EVENT_LINK_COLOR: '#A86',
         CONNECTING_LINK_COLOR: '#AFA'
@@ -145,14 +151,14 @@ const customColorPalettes: Record<string, Palette> = {
   }
 }
 
-test.describe('Color Palette', () => {
+test.describe('Color Palette', { tag: ['@screenshot', '@settings'] }, () => {
   test('Can show custom color palette', async ({ comfyPage }) => {
     await comfyPage.setSetting('Comfy.CustomColorPalettes', customColorPalettes)
     // Reload to apply the new setting. Setting Comfy.CustomColorPalettes directly
     // doesn't update the store immediately.
     await comfyPage.setup()
 
-    await comfyPage.loadWorkflow('every_node_color')
+    await comfyPage.loadWorkflow('nodes/every_node_color')
     await comfyPage.setSetting('Comfy.ColorPalette', 'obsidian_dark')
     await expect(comfyPage.canvas).toHaveScreenshot(
       'custom-color-palette-obsidian-dark-all-colors.png'
@@ -188,93 +194,110 @@ test.describe('Color Palette', () => {
   })
 })
 
-test.describe('Node Color Adjustments', () => {
-  test.beforeEach(async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('every_node_color')
-  })
-
-  test('should adjust opacity via node opacity setting', async ({
-    comfyPage
-  }) => {
-    await comfyPage.setSetting('Comfy.Node.Opacity', 0.5)
-    await comfyPage.page.waitForTimeout(128)
-
-    // Drag mouse to force canvas to redraw
-    await comfyPage.page.mouse.move(0, 0)
-
-    await expect(comfyPage.canvas).toHaveScreenshot('node-opacity-0.5.png')
-
-    await comfyPage.setSetting('Comfy.Node.Opacity', 1.0)
-    await comfyPage.page.waitForTimeout(128)
-
-    await comfyPage.page.mouse.move(8, 8)
-    await expect(comfyPage.canvas).toHaveScreenshot('node-opacity-1.png')
-  })
-
-  test('should persist color adjustments when changing themes', async ({
-    comfyPage
-  }) => {
-    await comfyPage.setSetting('Comfy.Node.Opacity', 0.2)
-    await comfyPage.setSetting('Comfy.ColorPalette', 'arc')
-    await comfyPage.nextFrame()
-    await comfyPage.page.mouse.move(0, 0)
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'node-opacity-0.2-arc-theme.png'
-    )
-  })
-
-  test('should not serialize color adjustments in workflow', async ({
-    comfyPage
-  }) => {
-    await comfyPage.setSetting('Comfy.Node.Opacity', 0.5)
-    await comfyPage.setSetting('Comfy.ColorPalette', 'light')
-    const saveWorkflowInterval = 1000
-    await comfyPage.page.waitForTimeout(saveWorkflowInterval)
-    const workflow = await comfyPage.page.evaluate(() => {
-      return localStorage.getItem('workflow')
-    })
-    for (const node of JSON.parse(workflow ?? '{}').nodes) {
-      if (node.bgcolor) expect(node.bgcolor).not.toMatch(/hsla/)
-      if (node.color) expect(node.color).not.toMatch(/hsla/)
-    }
-  })
-
-  test('should lighten node colors when switching to light theme', async ({
-    comfyPage
-  }) => {
-    await comfyPage.setSetting('Comfy.ColorPalette', 'light')
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot('node-lightened-colors.png')
-  })
-
-  test.describe('Context menu color adjustments', () => {
+test.describe(
+  'Node Color Adjustments',
+  { tag: ['@screenshot', '@settings'] },
+  () => {
     test.beforeEach(async ({ comfyPage }) => {
+      await comfyPage.loadWorkflow('nodes/every_node_color')
+    })
+
+    test('should adjust opacity via node opacity setting', async ({
+      comfyPage
+    }) => {
+      await comfyPage.setSetting('Comfy.Node.Opacity', 0.5)
+
+      // Drag mouse to force canvas to redraw
+      await comfyPage.page.mouse.move(0, 0)
+
+      await expect(comfyPage.canvas).toHaveScreenshot('node-opacity-0.5.png')
+
+      await comfyPage.setSetting('Comfy.Node.Opacity', 1.0)
+
+      await comfyPage.page.mouse.move(8, 8)
+      await expect(comfyPage.canvas).toHaveScreenshot('node-opacity-1.png')
+    })
+
+    test('should persist color adjustments when changing themes', async ({
+      comfyPage
+    }) => {
+      await comfyPage.setSetting('Comfy.Node.Opacity', 0.2)
+      await comfyPage.setSetting('Comfy.ColorPalette', 'arc')
+      await comfyPage.nextFrame()
+      await comfyPage.page.mouse.move(0, 0)
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'node-opacity-0.2-arc-theme.png'
+      )
+    })
+
+    test('should not serialize color adjustments in workflow', async ({
+      comfyPage
+    }) => {
+      await comfyPage.setSetting('Comfy.Node.Opacity', 0.5)
       await comfyPage.setSetting('Comfy.ColorPalette', 'light')
-      await comfyPage.setSetting('Comfy.Node.Opacity', 0.3)
-      const node = await comfyPage.getFirstNodeRef()
-      await node?.clickContextMenuOption('Colors')
+      await comfyPage.nextFrame()
+      const parsed = await (
+        await comfyPage.page.waitForFunction(
+          () => {
+            const workflow = localStorage.getItem('workflow')
+            if (!workflow) return null
+            try {
+              const data = JSON.parse(workflow)
+              return Array.isArray(data?.nodes) ? data : null
+            } catch {
+              return null
+            }
+          },
+          { timeout: 3000 }
+        )
+      ).jsonValue()
+      expect(parsed.nodes).toBeDefined()
+      expect(Array.isArray(parsed.nodes)).toBe(true)
+      for (const node of parsed.nodes) {
+        if (node.bgcolor) expect(node.bgcolor).not.toMatch(/hsla/)
+        if (node.color) expect(node.color).not.toMatch(/hsla/)
+      }
     })
 
-    test('should persist color adjustments when changing custom node colors', async ({
+    test('should lighten node colors when switching to light theme', async ({
       comfyPage
     }) => {
-      await comfyPage.page
-        .locator('.litemenu-entry.submenu span:has-text("red")')
-        .click()
+      await comfyPage.setSetting('Comfy.ColorPalette', 'light')
+      await comfyPage.nextFrame()
       await expect(comfyPage.canvas).toHaveScreenshot(
-        'node-opacity-0.3-color-changed.png'
+        'node-lightened-colors.png'
       )
     })
 
-    test('should persist color adjustments when removing custom node color', async ({
-      comfyPage
-    }) => {
-      await comfyPage.page
-        .locator('.litemenu-entry.submenu span:has-text("No color")')
-        .click()
-      await expect(comfyPage.canvas).toHaveScreenshot(
-        'node-opacity-0.3-color-removed.png'
-      )
+    test.describe('Context menu color adjustments', () => {
+      test.beforeEach(async ({ comfyPage }) => {
+        await comfyPage.setSetting('Comfy.ColorPalette', 'light')
+        await comfyPage.setSetting('Comfy.Node.Opacity', 0.3)
+        const node = await comfyPage.getFirstNodeRef()
+        await node?.clickContextMenuOption('Colors')
+      })
+
+      test('should persist color adjustments when changing custom node colors', async ({
+        comfyPage
+      }) => {
+        await comfyPage.page
+          .locator('.litemenu-entry.submenu span:has-text("red")')
+          .click()
+        await expect(comfyPage.canvas).toHaveScreenshot(
+          'node-opacity-0.3-color-changed.png'
+        )
+      })
+
+      test('should persist color adjustments when removing custom node color', async ({
+        comfyPage
+      }) => {
+        await comfyPage.page
+          .locator('.litemenu-entry.submenu span:has-text("No color")')
+          .click()
+        await expect(comfyPage.canvas).toHaveScreenshot(
+          'node-opacity-0.3-color-removed.png'
+        )
+      })
     })
-  })
-})
+  }
+)

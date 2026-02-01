@@ -1,50 +1,72 @@
 <template>
-  <div class="comfyui-body grid h-screen w-screen overflow-hidden">
-    <div id="comfyui-body-top" class="comfyui-body-top">
-      <TopMenubar v-if="useNewMenu === 'Top'" />
-    </div>
-    <div id="comfyui-body-bottom" class="comfyui-body-bottom">
-      <TopMenubar v-if="useNewMenu === 'Bottom'" />
-    </div>
+  <div class="comfyui-body grid h-full w-full overflow-hidden">
+    <div id="comfyui-body-top" class="comfyui-body-top" />
+    <div id="comfyui-body-bottom" class="comfyui-body-bottom" />
     <div id="comfyui-body-left" class="comfyui-body-left" />
     <div id="comfyui-body-right" class="comfyui-body-right" />
-    <div id="graph-canvas-container" class="graph-canvas-container">
+    <div
+      v-show="!linearMode"
+      id="graph-canvas-container"
+      ref="graphCanvasContainerRef"
+      class="graph-canvas-container"
+    >
       <GraphCanvas @ready="onGraphReady" />
     </div>
+    <LinearView v-if="linearMode" />
   </div>
 
   <GlobalToast />
   <RerouteMigrationToast />
+  <ModelImportProgressDialog />
+  <ManagerProgressToast />
   <UnloadWindowConfirmDialog v-if="!isElectron()" />
-  <BrowserTabTitle />
   <MenuHamburger />
 </template>
 
 <script setup lang="ts">
-import { useEventListener } from '@vueuse/core'
+import { useEventListener, useIntervalFn } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
 import type { ToastMessageOptions } from 'primevue/toast'
 import { useToast } from 'primevue/usetoast'
-import { computed, onBeforeUnmount, onMounted, watch, watchEffect } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  watchEffect
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import BrowserTabTitle from '@/components/BrowserTabTitle.vue'
+import { runWhenGlobalIdle } from '@/base/common/async'
 import MenuHamburger from '@/components/MenuHamburger.vue'
 import UnloadWindowConfirmDialog from '@/components/dialog/UnloadWindowConfirmDialog.vue'
 import GraphCanvas from '@/components/graph/GraphCanvas.vue'
 import GlobalToast from '@/components/toast/GlobalToast.vue'
 import RerouteMigrationToast from '@/components/toast/RerouteMigrationToast.vue'
-import TopMenubar from '@/components/topbar/TopMenubar.vue'
+import { useBrowserTabTitle } from '@/composables/useBrowserTabTitle'
 import { useCoreCommands } from '@/composables/useCoreCommands'
 import { useErrorHandling } from '@/composables/useErrorHandling'
+import { useProgressFavicon } from '@/composables/useProgressFavicon'
 import { SERVER_CONFIG_ITEMS } from '@/constants/serverConfig'
-import { i18n } from '@/i18n'
-import { StatusWsMessageStatus } from '@/schemas/apiSchema'
+import { i18n, loadLocale } from '@/i18n'
+import ModelImportProgressDialog from '@/platform/assets/components/ModelImportProgressDialog.vue'
+import { isCloud } from '@/platform/distribution/types'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { useTelemetry } from '@/platform/telemetry'
+import { useFrontendVersionMismatchWarning } from '@/platform/updates/common/useFrontendVersionMismatchWarning'
+import { useVersionCompatibilityStore } from '@/platform/updates/common/versionCompatibilityStore'
+import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
+import type { StatusWsMessageStatus } from '@/schemas/apiSchema'
 import { api } from '@/scripts/api'
 import { app } from '@/scripts/app'
 import { setupAutoQueueHandler } from '@/services/autoQueueService'
-import { useKeybindingService } from '@/services/keybindingService'
+import { useKeybindingService } from '@/platform/keybindings/keybindingService'
+import { useAssetsStore } from '@/stores/assetsStore'
 import { useCommandStore } from '@/stores/commandStore'
 import { useExecutionStore } from '@/stores/executionStore'
+import { useFirebaseAuthStore } from '@/stores/firebaseAuthStore'
 import { useMenuItemStore } from '@/stores/menuItemStore'
 import { useModelStore } from '@/stores/modelStore'
 import { useNodeDefStore, useNodeFrequencyStore } from '@/stores/nodeDefStore'
@@ -53,14 +75,16 @@ import {
   useQueueStore
 } from '@/stores/queueStore'
 import { useServerConfigStore } from '@/stores/serverConfigStore'
-import { useSettingStore } from '@/stores/settingStore'
 import { useBottomPanelStore } from '@/stores/workspace/bottomPanelStore'
 import { useColorPaletteStore } from '@/stores/workspace/colorPaletteStore'
 import { useSidebarTabStore } from '@/stores/workspace/sidebarTabStore'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { electronAPI, isElectron } from '@/utils/envUtil'
+import LinearView from '@/views/LinearView.vue'
+import ManagerProgressToast from '@/workbench/extensions/manager/components/ManagerProgressToast.vue'
 
 setupAutoQueueHandler()
+useProgressFavicon()
+useBrowserTabTitle()
 
 const { t } = useI18n()
 const toast = useToast()
@@ -68,6 +92,14 @@ const settingStore = useSettingStore()
 const executionStore = useExecutionStore()
 const colorPaletteStore = useColorPaletteStore()
 const queueStore = useQueueStore()
+const assetsStore = useAssetsStore()
+const versionCompatibilityStore = useVersionCompatibilityStore()
+const graphCanvasContainerRef = ref<HTMLDivElement | null>(null)
+const { linearMode } = storeToRefs(useCanvasStore())
+
+const telemetry = useTelemetry()
+const firebaseAuthStore = useFirebaseAuthStore()
+let hasTrackedLogin = false
 
 watch(
   () => colorPaletteStore.completedActivePalette,
@@ -131,10 +163,17 @@ watchEffect(() => {
   )
 })
 
-watchEffect(() => {
+watchEffect(async () => {
   const locale = settingStore.get('Comfy.Locale')
   if (locale) {
-    i18n.global.locale.value = locale as 'en' | 'zh' | 'ru' | 'ja'
+    // Load the locale dynamically if not already loaded
+    try {
+      await loadLocale(locale)
+      // Type assertion is safe here as loadLocale validates the locale exists
+      i18n.global.locale.value = locale as typeof i18n.global.locale.value
+    } catch (error) {
+      console.error(`Failed to switch to locale "${locale}":`, error)
+    }
   }
 })
 
@@ -154,20 +193,33 @@ watchEffect(() => {
   queueStore.maxHistoryItems = settingStore.get('Comfy.Queue.MaxHistoryItems')
 })
 
-const init = () => {
-  const coreCommands = useCoreCommands()
-  useCommandStore().registerCommands(coreCommands)
-  useMenuItemStore().registerCoreMenuCommands()
-  useKeybindingService().registerCoreKeybindings()
-  useSidebarTabStore().registerCoreSidebarTabs()
-  useBottomPanelStore().registerCoreBottomPanelTabs()
-  app.extensionManager = useWorkspaceStore()
-}
+const coreCommands = useCoreCommands()
+useCommandStore().registerCommands(coreCommands)
+useMenuItemStore().registerCoreMenuCommands()
+useKeybindingService().registerCoreKeybindings()
+useSidebarTabStore().registerCoreSidebarTabs()
+useBottomPanelStore().registerCoreBottomPanelTabs()
 
 const queuePendingTaskCountStore = useQueuePendingTaskCountStore()
+const sidebarTabStore = useSidebarTabStore()
+
 const onStatus = async (e: CustomEvent<StatusWsMessageStatus>) => {
   queuePendingTaskCountStore.update(e)
   await queueStore.update()
+  // Only update assets if the assets sidebar is currently open
+  // When sidebar is closed, AssetsSidebarTab.vue will refresh on mount
+  if (sidebarTabStore.activeSidebarTabId === 'assets' || linearMode.value) {
+    await assetsStore.updateHistory()
+  }
+}
+
+const onExecutionSuccess = async () => {
+  await queueStore.update()
+  // Only update assets if the assets sidebar is currently open
+  // When sidebar is closed, AssetsSidebarTab.vue will refresh on mount
+  if (sidebarTabStore.activeSidebarTabId === 'assets') {
+    await assetsStore.updateHistory()
+  }
 }
 
 const reconnectingMessage: ToastMessageOptions = {
@@ -193,57 +245,122 @@ const onReconnected = () => {
   }
 }
 
+useEventListener(api, 'status', onStatus)
+useEventListener(api, 'execution_success', onExecutionSuccess)
+useEventListener(api, 'reconnecting', onReconnecting)
+useEventListener(api, 'reconnected', onReconnected)
+
 onMounted(() => {
-  api.addEventListener('status', onStatus)
-  api.addEventListener('reconnecting', onReconnecting)
-  api.addEventListener('reconnected', onReconnected)
   executionStore.bindExecutionEvents()
 
   try {
-    init()
+    // Relocate the legacy menu container to the graph canvas container so it is below other elements
+    graphCanvasContainerRef.value?.prepend(app.ui.menuContainer)
   } catch (e) {
     console.error('Failed to init ComfyUI frontend', e)
   }
 })
 
 onBeforeUnmount(() => {
-  api.removeEventListener('status', onStatus)
-  api.removeEventListener('reconnecting', onReconnecting)
-  api.removeEventListener('reconnected', onReconnected)
   executionStore.unbindExecutionEvents()
 })
 
 useEventListener(window, 'keydown', useKeybindingService().keybindHandler)
 
 const { wrapWithErrorHandling, wrapWithErrorHandlingAsync } = useErrorHandling()
+
+// Initialize version mismatch warning in setup context
+// It will be triggered automatically when the store is ready
+useFrontendVersionMismatchWarning({ immediate: true })
+
+void nextTick(() => {
+  versionCompatibilityStore.initialize().catch((error) => {
+    console.warn('Version compatibility check failed:', error)
+  })
+})
+
 const onGraphReady = () => {
-  requestIdleCallback(
-    () => {
-      // Setting values now available after comfyApp.setup.
-      // Load keybindings.
-      wrapWithErrorHandling(useKeybindingService().registerUserKeybindings)()
+  runWhenGlobalIdle(() => {
+    // Track user login when app is ready in graph view (cloud only)
+    if (isCloud && firebaseAuthStore.isAuthenticated && !hasTrackedLogin) {
+      telemetry?.trackUserLoggedIn()
+      hasTrackedLogin = true
+    }
 
-      // Load server config
-      wrapWithErrorHandling(useServerConfigStore().loadServerConfig)(
-        SERVER_CONFIG_ITEMS,
-        settingStore.get('Comfy.Server.ServerConfigValues')
-      )
+    // Set up page visibility tracking (cloud only)
+    if (isCloud && telemetry) {
+      useEventListener(document, 'visibilitychange', () => {
+        telemetry.trackPageVisibilityChanged({
+          visibility_state: document.visibilityState as 'visible' | 'hidden'
+        })
+      })
+    }
 
-      // Load model folders
-      void wrapWithErrorHandlingAsync(useModelStore().loadModelFolders)()
+    // Set up tab count tracking (cloud only)
+    if (isCloud && telemetry) {
+      const tabCountChannel = new BroadcastChannel('comfyui-tab-count')
+      const activeTabs = new Map<string, number>()
+      const currentTabId = crypto.randomUUID()
 
-      // Non-blocking load of node frequencies
-      void wrapWithErrorHandlingAsync(
-        useNodeFrequencyStore().loadNodeFrequencies
-      )()
+      // Listen for heartbeats from other tabs
+      tabCountChannel.onmessage = (event) => {
+        if (
+          event.data.type === 'heartbeat' &&
+          event.data.tabId !== currentTabId
+        ) {
+          activeTabs.set(event.data.tabId, Date.now())
+        }
+      }
 
-      // Node defs now available after comfyApp.setup.
-      // Explicitly initialize nodeSearchService to avoid indexing delay when
-      // node search is triggered
-      useNodeDefStore().nodeSearchService.searchNode('')
-    },
-    { timeout: 1000 }
-  )
+      // 5-minute heartbeat interval
+      useIntervalFn(() => {
+        const now = Date.now()
+
+        // Clean up stale tabs (no heartbeat for 45 seconds)
+        activeTabs.forEach((lastHeartbeat, tabId) => {
+          if (now - lastHeartbeat > 45000) {
+            activeTabs.delete(tabId)
+          }
+        })
+
+        // Broadcast our heartbeat
+        tabCountChannel.postMessage({
+          type: 'heartbeat',
+          tabId: currentTabId
+        })
+
+        // Track tab count (include current tab)
+        const tabCount = activeTabs.size + 1
+        telemetry.trackTabCount({ tab_count: tabCount })
+      }, 60000 * 5)
+
+      // Send initial heartbeat
+      tabCountChannel.postMessage({ type: 'heartbeat', tabId: currentTabId })
+    }
+
+    // Setting values now available after comfyApp.setup.
+    // Load keybindings.
+    wrapWithErrorHandling(useKeybindingService().registerUserKeybindings)()
+
+    // Load server config
+    wrapWithErrorHandling(useServerConfigStore().loadServerConfig)(
+      SERVER_CONFIG_ITEMS,
+      settingStore.get('Comfy.Server.ServerConfigValues')
+    )
+
+    // Load model folders
+    void wrapWithErrorHandlingAsync(useModelStore().loadModelFolders)()
+
+    // Non-blocking load of node frequencies
+    void wrapWithErrorHandlingAsync(
+      useNodeFrequencyStore().loadNodeFrequencies
+    )()
+
+    // Node defs now available after comfyApp.setup.
+    // Explicitly initialize nodeSearchService to avoid indexing delay when
+    // node search is triggered
+    useNodeDefStore().nodeSearchService.searchNode('')
+  }, 1000)
 }
 </script>
 
@@ -307,7 +424,7 @@ const onGraphReady = () => {
   grid-column: 2;
   grid-row: 2;
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .comfyui-body-right {

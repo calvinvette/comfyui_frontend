@@ -47,8 +47,9 @@ export class ClipspaceDialog extends ComfyDialog {
     if (ClipspaceDialog.instance) {
       const self = ClipspaceDialog.instance
       // allow reconstruct controls when copying from non-image to image content.
+      const imgSettings = self.createImgSettings()
       const children = $el('div.comfy-modal-content', [
-        self.createImgSettings(),
+        ...(imgSettings ? [imgSettings] : []),
         ...self.createButtons()
       ])
 
@@ -81,7 +82,7 @@ export class ClipspaceDialog extends ComfyDialog {
     super()
   }
 
-  createButtons() {
+  override createButtons() {
     const buttons = []
 
     for (let idx in ClipspaceDialog.items) {
@@ -103,7 +104,7 @@ export class ClipspaceDialog extends ComfyDialog {
     return buttons
   }
 
-  createImgSettings() {
+  createImgSettings(): HTMLTableElement | null {
     if (ComfyApp.clipspace?.imgs) {
       const combo_items = []
       const imgs = ComfyApp.clipspace.imgs
@@ -167,17 +168,17 @@ export class ClipspaceDialog extends ComfyDialog {
 
       return $el('table', {}, [row1, row2, row3])
     } else {
-      return []
+      return null
     }
   }
 
-  createImgPreview() {
+  createImgPreview(): HTMLImageElement | null {
     if (ComfyApp.clipspace?.imgs) {
       return $el('img', { id: 'clipspace_preview', ondragstart: () => false })
-    } else return []
+    } else return null
   }
 
-  show() {
+  override show() {
     ClipspaceDialog.invalidate()
 
     this.element.style.display = 'block'
@@ -186,7 +187,7 @@ export class ClipspaceDialog extends ComfyDialog {
 
 app.registerExtension({
   name: 'Comfy.Clipspace',
-  init(app) {
+  init() {
     app.openClipspace = function () {
       if (!ClipspaceDialog.instance) {
         ClipspaceDialog.instance = new ClipspaceDialog()

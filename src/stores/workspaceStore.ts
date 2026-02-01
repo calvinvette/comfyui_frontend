@@ -1,22 +1,25 @@
+import { useMagicKeys } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { useToastStore } from '@/platform/updates/common/toastStore'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
 import type { Settings } from '@/schemas/apiSchema'
 import { useColorPaletteService } from '@/services/colorPaletteService'
 import { useDialogService } from '@/services/dialogService'
 import type { SidebarTabExtension, ToastManager } from '@/types/extensionTypes'
 
+import { useApiKeyAuthStore } from './apiKeyAuthStore'
 import { useCommandStore } from './commandStore'
+import { useFirebaseAuthStore } from './firebaseAuthStore'
 import { useQueueSettingsStore } from './queueStore'
-import { useSettingStore } from './settingStore'
-import { useToastStore } from './toastStore'
-import { useWorkflowStore } from './workflowStore'
 import { useBottomPanelStore } from './workspace/bottomPanelStore'
 import { useSidebarTabStore } from './workspace/sidebarTabStore'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const spinner = ref(false)
-  const shiftDown = ref(false)
+  const { shift: shiftDown } = useMagicKeys()
   /**
    * Whether the workspace is in focus mode.
    * When in focus mode, only the graph editor is visible.
@@ -42,6 +45,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const colorPalette = useColorPaletteService()
   const dialog = useDialogService()
   const bottomPanel = useBottomPanelStore()
+
+  const authStore = useFirebaseAuthStore()
+  const apiKeyStore = useApiKeyAuthStore()
+
+  const firebaseUser = computed(() => authStore.currentUser)
+  const isApiKeyLogin = computed(() => apiKeyStore.isAuthenticated)
+  const isLoggedIn = computed(
+    () => !!isApiKeyLogin.value || firebaseUser.value !== null
+  )
+  const partialUserStore = {
+    isLoggedIn
+  }
 
   /**
    * Registers a sidebar tab.
@@ -86,6 +101,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     colorPalette,
     dialog,
     bottomPanel,
+    user: partialUserStore,
 
     registerSidebarTab,
     unregisterSidebarTab,

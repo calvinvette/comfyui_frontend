@@ -1,30 +1,30 @@
 <template>
   <div class="flex flex-col">
-    <div v-if="showLightIntensityButton" class="relative show-light-intensity">
+    <div v-if="showLightIntensityButton" class="show-light-intensity relative">
       <Button
-        class="p-button-rounded p-button-text"
+        v-tooltip.right="{
+          value: $t('load3d.lightIntensity'),
+          showDelay: 300
+        }"
+        size="icon"
+        variant="textonly"
+        class="rounded-full"
+        :aria-label="$t('load3d.lightIntensity')"
         @click="toggleLightIntensity"
       >
-        <i
-          v-tooltip.right="{
-            value: t('load3d.lightIntensity'),
-            showDelay: 300
-          }"
-          class="pi pi-sun text-white text-lg"
-        />
+        <i class="pi pi-sun text-lg text-base-foreground" />
       </Button>
       <div
         v-show="showLightIntensity"
-        class="absolute left-12 top-0 bg-black bg-opacity-50 p-4 rounded-lg shadow-lg"
+        class="absolute top-0 left-12 rounded-lg bg-black/50 p-4 shadow-lg"
         style="width: 150px"
       >
         <Slider
           v-model="lightIntensity"
           class="w-full"
-          :min="1"
-          :max="20"
-          :step="1"
-          @change="updateLightIntensity"
+          :min="lightIntensityMinimum"
+          :max="lightIntensityMaximum"
+          :step="lightAdjustmentIncrement"
         />
       </div>
     </div>
@@ -32,51 +32,36 @@
 </template>
 
 <script setup lang="ts">
-import { Tooltip } from 'primevue'
-import Button from 'primevue/button'
 import Slider from 'primevue/slider'
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-import { t } from '@/i18n'
+import Button from '@/components/ui/button/Button.vue'
+import type { MaterialMode } from '@/extensions/core/load3d/interfaces'
+import { useSettingStore } from '@/platform/settings/settingStore'
 
-const vTooltip = Tooltip
+const lightIntensity = defineModel<number>('lightIntensity')
+const materialMode = defineModel<MaterialMode>('materialMode')
 
-const props = defineProps<{
-  lightIntensity: number
-  showLightIntensityButton: boolean
-}>()
-
-const emit = defineEmits<{
-  (e: 'updateLightIntensity', value: number): void
-}>()
-
-const lightIntensity = ref(props.lightIntensity)
-const showLightIntensityButton = ref(props.showLightIntensityButton)
+const showLightIntensityButton = computed(
+  () => materialMode.value === 'original'
+)
 const showLightIntensity = ref(false)
 
-watch(
-  () => props.lightIntensity,
-  (newValue) => {
-    lightIntensity.value = newValue
-  }
+const lightIntensityMaximum = useSettingStore().get(
+  'Comfy.Load3D.LightIntensityMaximum'
+)
+const lightIntensityMinimum = useSettingStore().get(
+  'Comfy.Load3D.LightIntensityMinimum'
+)
+const lightAdjustmentIncrement = useSettingStore().get(
+  'Comfy.Load3D.LightAdjustmentIncrement'
 )
 
-watch(
-  () => props.showLightIntensityButton,
-  (newValue) => {
-    showLightIntensityButton.value = newValue
-  }
-)
-
-const toggleLightIntensity = () => {
+function toggleLightIntensity() {
   showLightIntensity.value = !showLightIntensity.value
 }
 
-const updateLightIntensity = () => {
-  emit('updateLightIntensity', lightIntensity.value)
-}
-
-const closeLightSlider = (e: MouseEvent) => {
+function closeLightSlider(e: MouseEvent) {
   const target = e.target as HTMLElement
 
   if (!target.closest('.show-light-intensity')) {

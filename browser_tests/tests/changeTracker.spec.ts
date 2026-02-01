@@ -1,5 +1,5 @@
+import type { ComfyPage } from '../fixtures/ComfyPage'
 import {
-  ComfyPage,
   comfyExpect as expect,
   comfyPageFixture as test
 } from '../fixtures/ComfyPage'
@@ -15,7 +15,11 @@ async function afterChange(comfyPage: ComfyPage) {
   })
 }
 
-test.describe('Change Tracker', () => {
+test.beforeEach(async ({ comfyPage }) => {
+  await comfyPage.setSetting('Comfy.UseNewMenu', 'Disabled')
+})
+
+test.describe('Change Tracker', { tag: '@workflow' }, () => {
   test.describe('Undo/Redo', () => {
     test.beforeEach(async ({ comfyPage }) => {
       await comfyPage.setSetting('Comfy.UseNewMenu', 'Top')

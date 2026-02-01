@@ -1,19 +1,27 @@
-import { LGraphCanvas } from '@comfyorg/litegraph'
-import { LiteGraph } from '@comfyorg/litegraph'
 import { toRaw } from 'vue'
+import { z } from 'zod'
 import { fromZodError } from 'zod-validation-error'
 
+import { downloadBlob } from '@/base/common/downloadUtil'
 import { useErrorHandling } from '@/composables/useErrorHandling'
-import {
-  Colors,
-  type Palette,
-  paletteSchema
-} from '@/schemas/colorPaletteSchema'
+import { LGraphCanvas, LiteGraph } from '@/lib/litegraph/src/litegraph'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { paletteSchema, comfyBaseSchema } from '@/schemas/colorPaletteSchema'
+import type { Colors, Palette } from '@/schemas/colorPaletteSchema'
 import { app } from '@/scripts/app'
-import { downloadBlob, uploadFile } from '@/scripts/utils'
+import { uploadFile } from '@/scripts/utils'
 import { useNodeDefStore } from '@/stores/nodeDefStore'
-import { useSettingStore } from '@/stores/settingStore'
 import { useColorPaletteStore } from '@/stores/workspace/colorPaletteStore'
+
+const THEME_PROPERTY_MAP = {
+  NODE_BOX_OUTLINE_COLOR: 'component-node-border',
+  NODE_DEFAULT_BGCOLOR: 'component-node-background',
+  NODE_DEFAULT_BOXCOLOR: 'node-component-header-icon',
+  NODE_DEFAULT_COLOR: 'node-component-header-surface',
+  NODE_TITLE_COLOR: 'node-component-header',
+  WIDGET_BGCOLOR: 'component-node-widget-background',
+  WIDGET_TEXT_COLOR: 'component-node-foreground'
+} as const satisfies Partial<Record<keyof Colors['litegraph_base'], string>>
 
 export const useColorPaletteService = () => {
   const colorPaletteStore = useColorPaletteStore()
@@ -81,20 +89,76 @@ export const useColorPaletteService = () => {
     Object.assign(LGraphCanvas.link_type_colors, types, linkColorPalette)
   }
 
+  function validThemeProp(
+    propertyMaybe: unknown
+  ): propertyMaybe is keyof typeof THEME_PROPERTY_MAP {
+    return (
+      (propertyMaybe as keyof typeof THEME_PROPERTY_MAP) in THEME_PROPERTY_MAP
+    )
+  }
+
+  function loadLinkColorPaletteForVueNodes(
+    linkColorPalette: Colors['node_slot']
+  ) {
+    if (!linkColorPalette) return
+    const rootStyle = document.body?.style
+    if (!rootStyle) return
+
+    for (const dataType of nodeDefStore.nodeDataTypes) {
+      const cssVar = `color-datatype-${dataType}`
+
+      const valueMaybe =
+        linkColorPalette[dataType as unknown as keyof Colors['node_slot']]
+      if (valueMaybe) {
+        rootStyle.setProperty(`--${cssVar}`, valueMaybe)
+      } else {
+        rootStyle.removeProperty(`--${cssVar}`)
+      }
+    }
+  }
+
+  function loadLitegraphForVueNodes(
+    palette: Colors['litegraph_base'],
+    colorPaletteId: string
+  ) {
+    if (!palette) return
+    const rootStyle = document.body?.style
+    if (!rootStyle) return
+
+    for (const themeVar of Object.keys(THEME_PROPERTY_MAP)) {
+      if (!validThemeProp(themeVar)) {
+        continue
+      }
+      const cssVar = THEME_PROPERTY_MAP[themeVar]
+      if (colorPaletteId === 'dark' || colorPaletteId === 'light') {
+        rootStyle.removeProperty(`--${cssVar}`)
+        continue
+      }
+      const valueMaybe = palette[themeVar]
+      if (valueMaybe) {
+        rootStyle.setProperty(`--${cssVar}`, valueMaybe)
+      } else {
+        rootStyle.removeProperty(`--${cssVar}`)
+      }
+    }
+  }
+
   /**
    * Loads the LiteGraph color palette.
    *
    * @param liteGraphColorPalette - The palette to set.
    */
   const loadLiteGraphColorPalette = (palette: Colors['litegraph_base']) => {
-    // Sets special case colors
-    app.bypassBgColor = palette.NODE_BYPASS_BGCOLOR
-
     // Sets the colors of the LiteGraph objects
     app.canvas.node_title_color = palette.NODE_TITLE_COLOR
     app.canvas.default_link_color = palette.LINK_COLOR
-    app.canvas.background_image = palette.BACKGROUND_IMAGE
-    app.canvas.clear_background_color = palette.CLEAR_BACKGROUND_COLOR
+    const backgroundImage = settingStore.get('Comfy.Canvas.BackgroundImage')
+    if (backgroundImage) {
+      app.canvas.clear_background_color = 'transparent'
+    } else {
+      app.canvas.background_image = palette.BACKGROUND_IMAGE
+      app.canvas.clear_background_color = palette.CLEAR_BACKGROUND_COLOR
+    }
     app.canvas._pattern = undefined
 
     for (const [key, value] of Object.entries(palette)) {
@@ -116,16 +180,51 @@ export const useColorPaletteService = () => {
   }
 
   /**
+   * Gets optional keys from a Zod schema object.
+   *
+   * @param schema - The Zod schema object to analyze.
+   * @returns Array of optional key names.
+   */
+  const getOptionalKeys = (schema: z.ZodObject<any, any>) => {
+    const optionalKeys: string[] = []
+    const shape = schema.shape
+
+    for (const [key, value] of Object.entries(shape)) {
+      if (value instanceof z.ZodOptional || value instanceof z.ZodDefault) {
+        optionalKeys.push(key)
+      }
+    }
+
+    return optionalKeys
+  }
+  const optionalComfyBaseKeys = getOptionalKeys(comfyBaseSchema)
+
+  /**
    * Loads the Comfy color palette.
    *
    * @param comfyColorPalette - The palette to set.
    */
   const loadComfyColorPalette = (comfyColorPalette: Colors['comfy_base']) => {
-    if (comfyColorPalette) {
-      const rootStyle = document.documentElement.style
-      for (const [key, value] of Object.entries(comfyColorPalette)) {
-        rootStyle.setProperty('--' + key, value)
+    if (!comfyColorPalette) return
+    const rootStyle = document.documentElement.style
+    for (const [key, value] of Object.entries(comfyColorPalette)) {
+      rootStyle.setProperty('--' + key, value)
+    }
+
+    for (const optionalKey of optionalComfyBaseKeys) {
+      if (!(optionalKey in comfyColorPalette)) {
+        rootStyle.setProperty(
+          '--' + optionalKey,
+          `var(--palette-${optionalKey})`
+        )
       }
+    }
+
+    const backgroundImage = settingStore.get('Comfy.Canvas.BackgroundImage')
+    if (backgroundImage) {
+      rootStyle.setProperty('--bg-img', `url('${backgroundImage}')`)
+    } else {
+      rootStyle.removeProperty('--bg-img')
     }
   }
 
@@ -143,6 +242,11 @@ export const useColorPaletteService = () => {
     const completedPalette = colorPaletteStore.completePalette(colorPalette)
     loadLinkColorPalette(completedPalette.colors.node_slot)
     loadLiteGraphColorPalette(completedPalette.colors.litegraph_base)
+    loadLitegraphForVueNodes(
+      completedPalette.colors.litegraph_base,
+      colorPaletteId
+    )
+    loadLinkColorPaletteForVueNodes(completedPalette.colors.node_slot)
     loadComfyColorPalette(completedPalette.colors.comfy_base)
     app.canvas.setDirty(true, true)
 

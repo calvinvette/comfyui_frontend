@@ -1,10 +1,21 @@
+import type { Locator } from '@playwright/test'
 import { expect } from '@playwright/test'
+import type { Position } from '@vueuse/core'
 
-import { comfyPageFixture as test } from '../fixtures/ComfyPage'
+import {
+  comfyPageFixture as test,
+  testComfySnapToGridGridSize
+} from '../fixtures/ComfyPage'
+import type { ComfyPage } from '../fixtures/ComfyPage'
+import type { NodeReference } from '../fixtures/utils/litegraphUtils'
 
-test.describe('Item Interaction', () => {
+test.beforeEach(async ({ comfyPage }) => {
+  await comfyPage.setSetting('Comfy.UseNewMenu', 'Disabled')
+})
+
+test.describe('Item Interaction', { tag: ['@screenshot', '@node'] }, () => {
   test('Can select/delete all items', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('mixed_graph_items')
+    await comfyPage.loadWorkflow('groups/mixed_graph_items')
     await comfyPage.canvas.press('Control+a')
     await expect(comfyPage.canvas).toHaveScreenshot('selected-all.png')
     await comfyPage.canvas.press('Delete')
@@ -12,7 +23,7 @@ test.describe('Item Interaction', () => {
   })
 
   test('Can pin/unpin items with keyboard shortcut', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('mixed_graph_items')
+    await comfyPage.loadWorkflow('groups/mixed_graph_items')
     await comfyPage.canvas.press('Control+a')
     await comfyPage.canvas.press('KeyP')
     await comfyPage.nextFrame()
@@ -49,16 +60,22 @@ test.describe('Node Interaction', () => {
       })
     })
 
-    test('@2x Can highlight selected', async ({ comfyPage }) => {
-      await expect(comfyPage.canvas).toHaveScreenshot('default.png')
-      await comfyPage.clickTextEncodeNode1()
-      await expect(comfyPage.canvas).toHaveScreenshot('selected-node1.png')
-      await comfyPage.clickTextEncodeNode2()
-      await expect(comfyPage.canvas).toHaveScreenshot('selected-node2.png')
-    })
+    test(
+      '@2x Can highlight selected',
+      { tag: '@screenshot' },
+      async ({ comfyPage }) => {
+        await expect(comfyPage.canvas).toHaveScreenshot('default.png')
+        await comfyPage.clickTextEncodeNode1()
+        await expect(comfyPage.canvas).toHaveScreenshot('selected-node1.png')
+        await comfyPage.clickTextEncodeNode2()
+        await expect(comfyPage.canvas).toHaveScreenshot('selected-node2.png')
+      }
+    )
 
-    test('Can drag-select nodes with Meta (mac)', async ({ comfyPage }) => {
-      const clipNodes = await comfyPage.getNodeRefsByType('CLIPTextEncode')
+    const dragSelectNodes = async (
+      comfyPage: ComfyPage,
+      clipNodes: NodeReference[]
+    ) => {
       const clipNode1Pos = await clipNodes[0].getPosition()
       const clipNode2Pos = await clipNodes[1].getPosition()
       const offset = 64
@@ -74,18 +91,75 @@ test.describe('Node Interaction', () => {
         }
       )
       await comfyPage.page.keyboard.up('Meta')
+    }
+
+    test('Can drag-select nodes with Meta (mac)', async ({ comfyPage }) => {
+      const clipNodes = await comfyPage.getNodeRefsByType('CLIPTextEncode')
+      await dragSelectNodes(comfyPage, clipNodes)
       expect(await comfyPage.getSelectedGraphNodesCount()).toBe(
         clipNodes.length
       )
     })
+
+    test('Can move selected nodes using the Comfy.Canvas.MoveSelectedNodes.{Up|Down|Left|Right} commands', async ({
+      comfyPage
+    }) => {
+      const clipNodes = await comfyPage.getNodeRefsByType('CLIPTextEncode')
+      const getPositions = () =>
+        Promise.all(clipNodes.map((node) => node.getPosition()))
+      const testDirection = async ({
+        direction,
+        expectedPosition
+      }: {
+        direction: string
+        expectedPosition: (originalPosition: Position) => Position
+      }) => {
+        const originalPositions = await getPositions()
+        await dragSelectNodes(comfyPage, clipNodes)
+        await comfyPage.executeCommand(
+          `Comfy.Canvas.MoveSelectedNodes.${direction}`
+        )
+        await comfyPage.canvas.press(`Control+Arrow${direction}`)
+        const newPositions = await getPositions()
+        expect(newPositions).toEqual(originalPositions.map(expectedPosition))
+      }
+      await testDirection({
+        direction: 'Down',
+        expectedPosition: (originalPosition) => ({
+          ...originalPosition,
+          y: originalPosition.y + testComfySnapToGridGridSize
+        })
+      })
+      await testDirection({
+        direction: 'Right',
+        expectedPosition: (originalPosition) => ({
+          ...originalPosition,
+          x: originalPosition.x + testComfySnapToGridGridSize
+        })
+      })
+      await testDirection({
+        direction: 'Up',
+        expectedPosition: (originalPosition) => ({
+          ...originalPosition,
+          y: originalPosition.y - testComfySnapToGridGridSize
+        })
+      })
+      await testDirection({
+        direction: 'Left',
+        expectedPosition: (originalPosition) => ({
+          ...originalPosition,
+          x: originalPosition.x - testComfySnapToGridGridSize
+        })
+      })
+    })
   })
 
-  test('Can drag node', async ({ comfyPage }) => {
+  test('Can drag node', { tag: '@screenshot' }, async ({ comfyPage }) => {
     await comfyPage.dragNode2()
     await expect(comfyPage.canvas).toHaveScreenshot('dragged-node1.png')
   })
 
-  test.describe('Edge Interaction', () => {
+  test.describe('Edge Interaction', { tag: '@screenshot' }, () => {
     test.beforeEach(async ({ comfyPage }) => {
       await comfyPage.setSetting('Comfy.LinkRelease.Action', 'no action')
       await comfyPage.setSetting('Comfy.LinkRelease.ActionShift', 'no action')
@@ -152,13 +226,19 @@ test.describe('Node Interaction', () => {
     })
   })
 
-  test('Can adjust widget value', async ({ comfyPage }) => {
-    await comfyPage.adjustWidgetValue()
-    await expect(comfyPage.canvas).toHaveScreenshot('adjusted-widget-value.png')
-  })
+  test(
+    'Can adjust widget value',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.adjustWidgetValue()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'adjusted-widget-value.png'
+      )
+    }
+  )
 
-  test('Link snap to slot', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('snap_to_slot')
+  test('Link snap to slot', { tag: '@screenshot' }, async ({ comfyPage }) => {
+    await comfyPage.loadWorkflow('links/snap_to_slot')
     await expect(comfyPage.canvas).toHaveScreenshot('snap_to_slot.png')
 
     const outputSlotPos = {
@@ -174,57 +254,67 @@ test.describe('Node Interaction', () => {
     await expect(comfyPage.canvas).toHaveScreenshot('snap_to_slot_linked.png')
   })
 
-  test('Can batch move links by drag with shift', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('batch_move_links')
-    await expect(comfyPage.canvas).toHaveScreenshot('batch_move_links.png')
+  test(
+    'Can batch move links by drag with shift',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.loadWorkflow('links/batch_move_links')
+      await expect(comfyPage.canvas).toHaveScreenshot('batch_move_links.png')
 
-    const outputSlot1Pos = {
-      x: 304,
-      y: 127
+      const outputSlot1Pos = {
+        x: 304,
+        y: 127
+      }
+      const outputSlot2Pos = {
+        x: 307,
+        y: 310
+      }
+
+      await comfyPage.page.keyboard.down('Shift')
+      await comfyPage.dragAndDrop(outputSlot1Pos, outputSlot2Pos)
+      await comfyPage.page.keyboard.up('Shift')
+
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'batch_move_links_moved.png'
+      )
     }
-    const outputSlot2Pos = {
-      x: 307,
-      y: 310
+  )
+
+  test(
+    'Can batch disconnect links with ctrl+alt+click',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      const loadCheckpointClipSlotPos = {
+        x: 332,
+        y: 508
+      }
+      await comfyPage.canvas.click({
+        modifiers: ['Control', 'Alt'],
+        position: loadCheckpointClipSlotPos
+      })
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'batch-disconnect-links-disconnected.png'
+      )
     }
+  )
 
-    await comfyPage.page.keyboard.down('Shift')
-    await comfyPage.dragAndDrop(outputSlot1Pos, outputSlot2Pos)
-    await comfyPage.page.keyboard.up('Shift')
-
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'batch_move_links_moved.png'
-    )
-  })
-
-  test('Can batch disconnect links with ctrl+alt+click', async ({
-    comfyPage
-  }) => {
-    const loadCheckpointClipSlotPos = {
-      x: 332,
-      y: 508
+  test(
+    'Can toggle dom widget node open/closed',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await expect(comfyPage.canvas).toHaveScreenshot('default.png')
+      await comfyPage.clickTextEncodeNodeToggler()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'text-encode-toggled-off.png'
+      )
+      await comfyPage.delay(1000)
+      await comfyPage.clickTextEncodeNodeToggler()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'text-encode-toggled-back-open.png'
+      )
     }
-    await comfyPage.canvas.click({
-      modifiers: ['Control', 'Alt'],
-      position: loadCheckpointClipSlotPos
-    })
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'batch-disconnect-links-disconnected.png'
-    )
-  })
-
-  test('Can toggle dom widget node open/closed', async ({ comfyPage }) => {
-    await expect(comfyPage.canvas).toHaveScreenshot('default.png')
-    await comfyPage.clickTextEncodeNodeToggler()
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'text-encode-toggled-off.png'
-    )
-    await comfyPage.delay(1000)
-    await comfyPage.clickTextEncodeNodeToggler()
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'text-encode-toggled-back-open.png'
-    )
-  })
+  )
 
   test('Can close prompt dialog with canvas click (number widget)', async ({
     comfyPage
@@ -236,16 +326,16 @@ test.describe('Node Interaction', () => {
     await comfyPage.canvas.click({
       position: numberWidgetPos
     })
-    await expect(comfyPage.canvas).toHaveScreenshot('prompt-dialog-opened.png')
-    // Wait for 1s so that it does not trigger the search box by double click.
-    await comfyPage.page.waitForTimeout(1000)
+    const legacyPrompt = comfyPage.page.locator('.graphdialog')
+    await expect(legacyPrompt).toBeVisible()
+    await comfyPage.delay(300)
     await comfyPage.canvas.click({
       position: {
         x: 10,
         y: 10
       }
     })
-    await expect(comfyPage.canvas).toHaveScreenshot('prompt-dialog-closed.png')
+    await expect(legacyPrompt).toBeHidden()
   })
 
   test('Can close prompt dialog with canvas click (text widget)', async ({
@@ -255,43 +345,44 @@ test.describe('Node Interaction', () => {
       x: 167,
       y: 143
     }
-    await comfyPage.loadWorkflow('single_save_image_node')
+    await comfyPage.loadWorkflow('nodes/single_save_image_node')
     await comfyPage.canvas.click({
       position: textWidgetPos
     })
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'prompt-dialog-opened-text.png'
-    )
-    await comfyPage.page.waitForTimeout(1000)
+    const legacyPrompt = comfyPage.page.locator('.graphdialog')
+    await expect(legacyPrompt).toBeVisible()
+    await comfyPage.delay(300)
     await comfyPage.canvas.click({
       position: {
         x: 10,
         y: 10
       }
     })
-    await expect(comfyPage.canvas).toHaveScreenshot(
-      'prompt-dialog-closed-text.png'
-    )
+    await expect(legacyPrompt).toBeHidden()
   })
 
-  test('Can double click node title to edit', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('single_ksampler')
-    await comfyPage.canvas.dblclick({
-      position: {
-        x: 50,
-        y: 10
-      },
-      delay: 5
-    })
-    await comfyPage.page.keyboard.type('Hello World')
-    await comfyPage.page.keyboard.press('Enter')
-    await expect(comfyPage.canvas).toHaveScreenshot('node-title-edited.png')
-  })
+  test(
+    'Can double click node title to edit',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.loadWorkflow('nodes/single_ksampler')
+      await comfyPage.canvas.dblclick({
+        position: {
+          x: 50,
+          y: 10
+        },
+        delay: 5
+      })
+      await comfyPage.page.keyboard.type('Hello World')
+      await comfyPage.page.keyboard.press('Enter')
+      await expect(comfyPage.canvas).toHaveScreenshot('node-title-edited.png')
+    }
+  )
 
   test('Double click node body does not trigger edit', async ({
     comfyPage
   }) => {
-    await comfyPage.loadWorkflow('single_ksampler')
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
     await comfyPage.canvas.dblclick({
       position: {
         x: 50,
@@ -302,29 +393,41 @@ test.describe('Node Interaction', () => {
     expect(await comfyPage.page.locator('.node-title-editor').count()).toBe(0)
   })
 
-  test('Can group selected nodes', async ({ comfyPage }) => {
-    await comfyPage.setSetting('Comfy.GroupSelectedNodes.Padding', 10)
-    await comfyPage.select2Nodes()
-    await comfyPage.page.keyboard.down('Control')
-    await comfyPage.page.keyboard.press('KeyG')
-    await comfyPage.page.keyboard.up('Control')
-    await comfyPage.nextFrame()
-    // Confirm group title
-    await comfyPage.page.keyboard.press('Enter')
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot('group-selected-nodes.png')
-  })
+  test(
+    'Can group selected nodes',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.setSetting('Comfy.GroupSelectedNodes.Padding', 10)
+      await comfyPage.select2Nodes()
+      await comfyPage.page.keyboard.down('Control')
+      await comfyPage.page.keyboard.press('KeyG')
+      await comfyPage.page.keyboard.up('Control')
+      await comfyPage.nextFrame()
+      // Confirm group title
+      await comfyPage.page.keyboard.press('Enter')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'group-selected-nodes.png'
+      )
+    }
+  )
 
-  test('Can fit group to contents', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('oversized_group')
-    await comfyPage.ctrlA()
-    await comfyPage.nextFrame()
-    await comfyPage.executeCommand('Comfy.Graph.FitGroupToContents')
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot('group-fit-to-contents.png')
-  })
+  test(
+    'Can fit group to contents',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.loadWorkflow('groups/oversized_group')
+      await comfyPage.ctrlA()
+      await comfyPage.nextFrame()
+      await comfyPage.executeCommand('Comfy.Graph.FitGroupToContents')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'group-fit-to-contents.png'
+      )
+    }
+  )
 
-  test('Can pin/unpin nodes', async ({ comfyPage }) => {
+  test('Can pin/unpin nodes', { tag: '@screenshot' }, async ({ comfyPage }) => {
     await comfyPage.select2Nodes()
     await comfyPage.executeCommand('Comfy.Canvas.ToggleSelectedNodes.Pin')
     await comfyPage.nextFrame()
@@ -334,22 +437,24 @@ test.describe('Node Interaction', () => {
     await expect(comfyPage.canvas).toHaveScreenshot('nodes-unpinned.png')
   })
 
-  test('Can bypass/unbypass nodes with keyboard shortcut', async ({
-    comfyPage
-  }) => {
-    await comfyPage.select2Nodes()
-    await comfyPage.canvas.press('Control+b')
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot('nodes-bypassed.png')
-    await comfyPage.canvas.press('Control+b')
-    await comfyPage.nextFrame()
-    await expect(comfyPage.canvas).toHaveScreenshot('nodes-unbypassed.png')
-  })
+  test(
+    'Can bypass/unbypass nodes with keyboard shortcut',
+    { tag: '@screenshot' },
+    async ({ comfyPage }) => {
+      await comfyPage.select2Nodes()
+      await comfyPage.canvas.press('Control+b')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot('nodes-bypassed.png')
+      await comfyPage.canvas.press('Control+b')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot('nodes-unbypassed.png')
+    }
+  )
 })
 
-test.describe('Group Interaction', () => {
+test.describe('Group Interaction', { tag: '@screenshot' }, () => {
   test('Can double click group title to edit', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('single_group')
+    await comfyPage.loadWorkflow('groups/single_group')
     await comfyPage.canvas.dblclick({
       position: {
         x: 50,
@@ -363,7 +468,7 @@ test.describe('Group Interaction', () => {
   })
 })
 
-test.describe('Canvas Interaction', () => {
+test.describe('Canvas Interaction', { tag: '@screenshot' }, () => {
   test('Can zoom in/out', async ({ comfyPage }) => {
     await comfyPage.zoom(-100)
     await expect(comfyPage.canvas).toHaveScreenshot('zoomed-in.png')
@@ -565,23 +670,23 @@ test.describe('Widget Interaction', () => {
   })
 })
 
-test.describe('Load workflow', () => {
+test.describe('Load workflow', { tag: '@screenshot' }, () => {
   test('Can load workflow with string node id', async ({ comfyPage }) => {
-    await comfyPage.loadWorkflow('string_node_id')
+    await comfyPage.loadWorkflow('nodes/string_node_id')
     await expect(comfyPage.canvas).toHaveScreenshot('string_node_id.png')
   })
 
   test('Can load workflow with ("STRING",) input node', async ({
     comfyPage
   }) => {
-    await comfyPage.loadWorkflow('string_input')
+    await comfyPage.loadWorkflow('inputs/string_input')
     await expect(comfyPage.canvas).toHaveScreenshot('string_input.png')
   })
 
   test('Restore workflow on reload (switch workflow)', async ({
     comfyPage
   }) => {
-    await comfyPage.loadWorkflow('single_ksampler')
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
     await expect(comfyPage.canvas).toHaveScreenshot('single_ksampler.png')
     await comfyPage.setup({ clearStorage: false })
     await expect(comfyPage.canvas).toHaveScreenshot('single_ksampler.png')
@@ -590,12 +695,9 @@ test.describe('Load workflow', () => {
   test('Restore workflow on reload (modify workflow)', async ({
     comfyPage
   }) => {
-    await comfyPage.loadWorkflow('single_ksampler')
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
     const node = (await comfyPage.getFirstNodeRef())!
     await node.click('collapse')
-    // Wait 300ms between 2 clicks so that it is not treated as a double click
-    // by litegraph.
-    await comfyPage.page.waitForTimeout(300)
     await comfyPage.clickEmptySpace()
     await expect(comfyPage.canvas).toHaveScreenshot(
       'single_ksampler_modified.png'
@@ -619,7 +721,7 @@ test.describe('Load workflow', () => {
       workflowA = generateUniqueFilename()
       await comfyPage.menu.topbar.saveWorkflow(workflowA)
       workflowB = generateUniqueFilename()
-      await comfyPage.menu.topbar.triggerTopbarCommand(['Workflow', 'New'])
+      await comfyPage.menu.topbar.triggerTopbarCommand(['New'])
       await comfyPage.menu.topbar.saveWorkflow(workflowB)
 
       // Wait for localStorage to persist the workflow paths before reloading
@@ -666,6 +768,12 @@ test.describe('Load workflow', () => {
       expect(activeWorkflowName).toEqual(workflowPathB)
     })
   })
+
+  test('Auto fit view after loading workflow', async ({ comfyPage }) => {
+    await comfyPage.setSetting('Comfy.EnableWorkflowViewRestore', false)
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
+    await expect(comfyPage.canvas).toHaveScreenshot('single_ksampler_fit.png')
+  })
 })
 
 test.describe('Load duplicate workflow', () => {
@@ -676,10 +784,336 @@ test.describe('Load duplicate workflow', () => {
   test('A workflow can be loaded multiple times in a row', async ({
     comfyPage
   }) => {
-    await comfyPage.loadWorkflow('single_ksampler')
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
     await comfyPage.menu.workflowsTab.open()
     await comfyPage.executeCommand('Comfy.NewBlankWorkflow')
-    await comfyPage.loadWorkflow('single_ksampler')
+    await comfyPage.loadWorkflow('nodes/single_ksampler')
     expect(await comfyPage.getGraphNodesCount()).toBe(1)
+  })
+})
+
+test.describe('Viewport settings', () => {
+  test.beforeEach(async ({ comfyPage }) => {
+    await comfyPage.setSetting('Comfy.UseNewMenu', 'Top')
+    await comfyPage.setSetting('Comfy.Workflow.WorkflowTabsPosition', 'Topbar')
+
+    await comfyPage.setupWorkflowsDirectory({})
+  })
+
+  test('Keeps viewport settings when changing tabs', async ({
+    comfyPage,
+    comfyMouse
+  }) => {
+    const changeTab = async (tab: Locator) => {
+      await tab.click()
+      await comfyPage.nextFrame()
+      await comfyMouse.move(comfyPage.emptySpace)
+
+      // If tooltip is visible, wait for it to hide
+      await expect(
+        comfyPage.page.locator('.workflow-popover-fade')
+      ).toHaveCount(0)
+    }
+
+    // Screenshot the canvas element
+    await comfyPage.setSetting('Comfy.Graph.CanvasMenu', true)
+
+    const toggleButton = comfyPage.page.getByTestId('toggle-minimap-button')
+    await toggleButton.click()
+    await comfyPage.setSetting('Comfy.Graph.CanvasMenu', false)
+
+    await comfyPage.menu.topbar.saveWorkflow('Workflow A')
+    await comfyPage.nextFrame()
+
+    // Save workflow as a new file, then zoom out before screen shot
+    await comfyPage.menu.topbar.saveWorkflowAs('Workflow B')
+
+    await comfyPage.nextFrame()
+    const tabA = comfyPage.menu.topbar.getWorkflowTab('Workflow A')
+    await changeTab(tabA)
+
+    const screenshotA = (await comfyPage.canvas.screenshot()).toString('base64')
+
+    const tabB = comfyPage.menu.topbar.getWorkflowTab('Workflow B')
+    await changeTab(tabB)
+
+    await comfyMouse.move(comfyPage.emptySpace)
+    for (let i = 0; i < 4; i++) {
+      await comfyMouse.wheel(0, 60)
+    }
+
+    await comfyPage.nextFrame()
+    const screenshotB = (await comfyPage.canvas.screenshot()).toString('base64')
+
+    // Ensure that the screenshots are different due to zoom level
+    expect(screenshotB).not.toBe(screenshotA)
+
+    // Go back to Workflow A
+    await changeTab(tabA)
+    expect((await comfyPage.canvas.screenshot()).toString('base64')).toBe(
+      screenshotA
+    )
+
+    // And back to Workflow B
+    await changeTab(tabB)
+    expect((await comfyPage.canvas.screenshot()).toString('base64')).toBe(
+      screenshotB
+    )
+  })
+})
+
+test.describe('Canvas Navigation', { tag: '@screenshot' }, () => {
+  test.describe('Legacy Mode', () => {
+    test.beforeEach(async ({ comfyPage }) => {
+      await comfyPage.setSetting('Comfy.Canvas.NavigationMode', 'legacy')
+    })
+
+    test('Left-click drag in empty area should pan canvas', async ({
+      comfyPage
+    }) => {
+      await comfyPage.dragAndDrop({ x: 50, y: 50 }, { x: 150, y: 150 })
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-left-drag-pan.png'
+      )
+    })
+
+    test('Middle-click drag should pan canvas', async ({ comfyPage }) => {
+      await comfyPage.page.mouse.move(50, 50)
+      await comfyPage.page.mouse.down({ button: 'middle' })
+      await comfyPage.page.mouse.move(150, 150)
+      await comfyPage.page.mouse.up({ button: 'middle' })
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-middle-drag-pan.png'
+      )
+    })
+
+    test('Mouse wheel should zoom in/out', async ({ comfyPage }) => {
+      await comfyPage.page.mouse.move(400, 300)
+      await comfyPage.page.mouse.wheel(0, -120)
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-wheel-zoom-in.png'
+      )
+
+      await comfyPage.page.mouse.wheel(0, 240)
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-wheel-zoom-out.png'
+      )
+    })
+
+    test('Left-click on node should not pan canvas', async ({ comfyPage }) => {
+      await comfyPage.clickTextEncodeNode1()
+      const selectedCount = await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCount).toBe(1)
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-click-node-select.png'
+      )
+    })
+  })
+
+  test.describe('Standard Mode', () => {
+    test.beforeEach(async ({ comfyPage }) => {
+      await comfyPage.setSetting('Comfy.Canvas.NavigationMode', 'standard')
+    })
+
+    test('Left-click drag in empty area should select nodes', async ({
+      comfyPage
+    }) => {
+      const clipNodes = await comfyPage.getNodeRefsByType('CLIPTextEncode')
+      const clipNode1Pos = await clipNodes[0].getPosition()
+      const clipNode2Pos = await clipNodes[1].getPosition()
+      const offset = 64
+
+      await comfyPage.dragAndDrop(
+        {
+          x: Math.min(clipNode1Pos.x, clipNode2Pos.x) - offset,
+          y: Math.min(clipNode1Pos.y, clipNode2Pos.y) - offset
+        },
+        {
+          x: Math.max(clipNode1Pos.x, clipNode2Pos.x) + offset,
+          y: Math.max(clipNode1Pos.y, clipNode2Pos.y) + offset
+        }
+      )
+
+      const selectedCount = await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCount).toBe(clipNodes.length)
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-left-drag-select.png'
+      )
+    })
+
+    test('Middle-click drag should pan canvas', async ({ comfyPage }) => {
+      await comfyPage.page.mouse.move(50, 50)
+      await comfyPage.page.mouse.down({ button: 'middle' })
+      await comfyPage.page.mouse.move(150, 150)
+      await comfyPage.page.mouse.up({ button: 'middle' })
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-middle-drag-pan.png'
+      )
+    })
+
+    test('Ctrl + mouse wheel should zoom in/out', async ({ comfyPage }) => {
+      await comfyPage.page.mouse.move(400, 300)
+      await comfyPage.page.keyboard.down('Control')
+      await comfyPage.page.mouse.wheel(0, -120)
+      await comfyPage.page.keyboard.up('Control')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-ctrl-wheel-zoom-in.png'
+      )
+
+      await comfyPage.page.keyboard.down('Control')
+      await comfyPage.page.mouse.wheel(0, 240)
+      await comfyPage.page.keyboard.up('Control')
+      await comfyPage.nextFrame()
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-ctrl-wheel-zoom-out.png'
+      )
+    })
+
+    test('Left-click on node should select node (not start selection box)', async ({
+      comfyPage
+    }) => {
+      await comfyPage.clickTextEncodeNode1()
+      const selectedCount = await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCount).toBe(1)
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-click-node-select.png'
+      )
+    })
+
+    test('Space + left-click drag should pan canvas', async ({ comfyPage }) => {
+      // Click canvas to focus it
+      await comfyPage.page.click('canvas')
+      await comfyPage.nextFrame()
+
+      await comfyPage.page.keyboard.down('Space')
+      await comfyPage.dragAndDrop({ x: 50, y: 50 }, { x: 150, y: 150 })
+      await comfyPage.page.keyboard.up('Space')
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'standard-space-drag-pan.png'
+      )
+    })
+
+    test('Space key overrides default left-click behavior', async ({
+      comfyPage
+    }) => {
+      const clipNodes = await comfyPage.getNodeRefsByType('CLIPTextEncode')
+      const clipNode1Pos = await clipNodes[0].getPosition()
+      const offset = 64
+
+      await comfyPage.dragAndDrop(
+        {
+          x: clipNode1Pos.x - offset,
+          y: clipNode1Pos.y - offset
+        },
+        {
+          x: clipNode1Pos.x + offset,
+          y: clipNode1Pos.y + offset
+        }
+      )
+
+      const selectedCountAfterDrag =
+        await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCountAfterDrag).toBeGreaterThan(0)
+
+      await comfyPage.clickEmptySpace()
+      const selectedCountAfterClear =
+        await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCountAfterClear).toBe(0)
+
+      await comfyPage.page.keyboard.down('Space')
+      await comfyPage.dragAndDrop(
+        {
+          x: clipNode1Pos.x - offset,
+          y: clipNode1Pos.y - offset
+        },
+        {
+          x: clipNode1Pos.x + offset,
+          y: clipNode1Pos.y + offset
+        }
+      )
+      await comfyPage.page.keyboard.up('Space')
+
+      const selectedCountAfterSpaceDrag =
+        await comfyPage.getSelectedGraphNodesCount()
+      expect(selectedCountAfterSpaceDrag).toBe(0)
+    })
+  })
+
+  test('Shift + mouse wheel should pan canvas horizontally', async ({
+    comfyPage
+  }) => {
+    await comfyPage.setSetting('Comfy.Canvas.MouseWheelScroll', 'panning')
+
+    await comfyPage.page.click('canvas')
+    await comfyPage.nextFrame()
+
+    await expect(comfyPage.canvas).toHaveScreenshot('standard-initial.png')
+
+    await comfyPage.page.mouse.move(400, 300)
+
+    await comfyPage.page.keyboard.down('Shift')
+    await comfyPage.page.mouse.wheel(0, 120)
+    await comfyPage.page.keyboard.up('Shift')
+    await comfyPage.nextFrame()
+    await expect(comfyPage.canvas).toHaveScreenshot(
+      'standard-shift-wheel-pan-right.png'
+    )
+
+    await comfyPage.page.keyboard.down('Shift')
+    await comfyPage.page.mouse.wheel(0, -240)
+    await comfyPage.page.keyboard.up('Shift')
+    await comfyPage.nextFrame()
+    await expect(comfyPage.canvas).toHaveScreenshot(
+      'standard-shift-wheel-pan-left.png'
+    )
+
+    await comfyPage.page.keyboard.down('Shift')
+    await comfyPage.page.mouse.wheel(0, 120)
+    await comfyPage.page.keyboard.up('Shift')
+    await comfyPage.nextFrame()
+    await expect(comfyPage.canvas).toHaveScreenshot(
+      'standard-shift-wheel-pan-center.png'
+    )
+  })
+
+  test.describe('Edge Cases', () => {
+    test('Multiple modifier keys work correctly in legacy mode', async ({
+      comfyPage
+    }) => {
+      await comfyPage.setSetting('Comfy.Canvas.NavigationMode', 'legacy')
+
+      await comfyPage.page.keyboard.down('Alt')
+      await comfyPage.page.keyboard.down('Shift')
+      await comfyPage.dragAndDrop({ x: 50, y: 50 }, { x: 150, y: 150 })
+      await comfyPage.page.keyboard.up('Shift')
+      await comfyPage.page.keyboard.up('Alt')
+
+      await expect(comfyPage.canvas).toHaveScreenshot(
+        'legacy-alt-shift-drag.png'
+      )
+    })
+
+    test('Cursor changes appropriately in different modes', async ({
+      comfyPage
+    }) => {
+      const getCursorStyle = async () => {
+        return await comfyPage.page.evaluate(() => {
+          return (
+            document.getElementById('graph-canvas')!.style.cursor || 'default'
+          )
+        })
+      }
+
+      await comfyPage.setSetting('Comfy.Canvas.NavigationMode', 'legacy')
+      await comfyPage.page.mouse.move(50, 50)
+      await comfyPage.page.mouse.down()
+      expect(await getCursorStyle()).toBe('grabbing')
+      await comfyPage.page.mouse.up()
+    })
   })
 })

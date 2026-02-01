@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { fromZodError } from 'zod-validation-error'
 
+import { resultItemType } from '@/schemas/apiSchema'
+import { CONTROL_OPTIONS } from '@/types/simplifiedWidget'
+
 const zComboOption = z.union([z.string(), z.number()])
 const zRemoteWidgetConfig = z.object({
   route: z.string().url().or(z.string().startsWith('/')),
@@ -21,21 +24,24 @@ export const zBaseInputOptions = z
   .object({
     default: z.any().optional(),
     defaultInput: z.boolean().optional(),
+    display_name: z.string().optional(),
     forceInput: z.boolean().optional(),
     tooltip: z.string().optional(),
+    socketless: z.boolean().optional(),
     hidden: z.boolean().optional(),
     advanced: z.boolean().optional(),
+    widgetType: z.string().optional(),
     /** Backend-only properties. */
     rawLink: z.boolean().optional(),
     lazy: z.boolean().optional()
   })
   .passthrough()
 
-export const zNumericInputOptions = zBaseInputOptions.extend({
+const zNumericInputOptions = zBaseInputOptions.extend({
   min: z.number().optional(),
   max: z.number().optional(),
   step: z.number().optional(),
-  // Note: Many node authors are using INT/FLOAT to pass list of INT/FLOAT.
+  /** Note: Many node authors are using INT/FLOAT to pass list of INT/FLOAT. */
   default: z.union([z.number(), z.array(z.number())]).optional(),
   display: z.enum(['slider', 'number', 'knob']).optional()
 })
@@ -45,7 +51,9 @@ export const zIntInputOptions = zNumericInputOptions.extend({
    * If true, a linked widget will be added to the node to select the mode
    * of `control_after_generate`.
    */
-  control_after_generate: z.boolean().optional()
+  control_after_generate: z
+    .union([z.boolean(), z.enum(CONTROL_OPTIONS)])
+    .optional()
 })
 
 export const zFloatInputOptions = zNumericInputOptions.extend({
@@ -69,11 +77,15 @@ export const zStringInputOptions = zBaseInputOptions.extend({
 })
 
 export const zComboInputOptions = zBaseInputOptions.extend({
-  control_after_generate: z.boolean().optional(),
+  control_after_generate: z
+    .union([z.boolean(), z.enum(CONTROL_OPTIONS)])
+    .optional(),
   image_upload: z.boolean().optional(),
-  image_folder: z.enum(['input', 'output', 'temp']).optional(),
+  image_folder: resultItemType.optional(),
   allow_batch: z.boolean().optional(),
   video_upload: z.boolean().optional(),
+  audio_upload: z.boolean().optional(),
+  animated_image_upload: z.boolean().optional(),
   options: z.array(zComboOption).optional(),
   remote: zRemoteWidgetConfig.optional(),
   /** Whether the widget is a multi-select widget. */
@@ -124,28 +136,10 @@ export function isFloatInputSpec(
   return inputSpec[0] === 'FLOAT'
 }
 
-export function isBooleanInputSpec(
-  inputSpec: InputSpec
-): inputSpec is BooleanInputSpec {
-  return inputSpec[0] === 'BOOLEAN'
-}
-
-export function isStringInputSpec(
-  inputSpec: InputSpec
-): inputSpec is StringInputSpec {
-  return inputSpec[0] === 'STRING'
-}
-
 export function isComboInputSpecV2(
   inputSpec: InputSpec
 ): inputSpec is ComboInputSpecV2 {
   return inputSpec[0] === 'COMBO'
-}
-
-export function isCustomInputSpec(
-  inputSpec: InputSpec
-): inputSpec is CustomInputSpec {
-  return typeof inputSpec[0] === 'string' && !excludedLiterals.has(inputSpec[0])
 }
 
 export function isComboInputSpec(
@@ -208,21 +202,115 @@ const zComfyOutputTypesSpec = z.array(
   z.union([zComfyNodeDataType, zComfyComboOutput])
 )
 
+/**
+ * Widget dependency with type information.
+ * Provides strong type enforcement for JSONata evaluation context.
+ */
+const zWidgetDependency = z.object({
+  name: z.string(),
+  type: z.string()
+})
+
+export type WidgetDependency = z.infer<typeof zWidgetDependency>
+
+/**
+ * Schema for price badge depends_on field.
+ * Specifies which widgets and inputs the pricing expression depends on.
+ * Widgets must be specified as objects with name and type.
+ */
+const zPriceBadgeDepends = z.object({
+  widgets: z.array(zWidgetDependency).optional().default([]),
+  inputs: z.array(z.string()).optional().default([]),
+  /**
+   * Autogrow input group names to track.
+   * For each group, the count of connected inputs will be available in the
+   * JSONata context as `g.<groupName>`.
+   * Example: `input_groups: ["reference_videos"]` makes `g.reference_videos`
+   * available with the count of connected inputs like `reference_videos.character1`, etc.
+   */
+  input_groups: z.array(z.string()).optional().default([])
+})
+
+/**
+ * Schema for price badge definition.
+ * Used to calculate and display pricing information for API nodes.
+ * The `expr` field contains a JSONata expression that returns a PricingResult.
+ */
+const zPriceBadge = z.object({
+  engine: z.literal('jsonata').optional().default('jsonata'),
+  depends_on: zPriceBadgeDepends
+    .optional()
+    .default({ widgets: [], inputs: [], input_groups: [] }),
+  expr: z.string()
+})
+
+export type PriceBadge = z.infer<typeof zPriceBadge>
+
 export const zComfyNodeDef = z.object({
   input: zComfyInputsSpec.optional(),
   output: zComfyOutputTypesSpec.optional(),
   output_is_list: z.array(z.boolean()).optional(),
   output_name: z.array(z.string()).optional(),
   output_tooltips: z.array(z.string()).optional(),
+  output_matchtypes: z.array(z.string().optional()).optional(),
   name: z.string(),
   display_name: z.string(),
   description: z.string(),
+  help: z.string().optional(),
   category: z.string(),
   output_node: z.boolean(),
   python_module: z.string(),
   deprecated: z.boolean().optional(),
-  experimental: z.boolean().optional()
+  experimental: z.boolean().optional(),
+  dev_only: z.boolean().optional(),
+  /**
+   * Whether the node is an API node. Running API nodes requires login to
+   * Comfy Org account.
+   * https://docs.comfy.org/tutorials/api-nodes/overview
+   */
+  api_node: z.boolean().optional(),
+  /**
+   * Specifies the order of inputs for each input category.
+   * Used to ensure consistent widget ordering regardless of JSON serialization.
+   * Keys are 'required', 'optional', etc., values are arrays of input names.
+   */
+  input_order: z.record(z.array(z.string())).optional(),
+  /**
+   * Alternative names for search. Useful for synonyms, abbreviations,
+   * or old names after renaming a node.
+   */
+  search_aliases: z.array(z.string()).optional(),
+  /**
+   * Price badge definition for API nodes.
+   * Contains a JSONata expression to calculate pricing based on widget values
+   * and input connectivity.
+   */
+  price_badge: zPriceBadge.optional()
 })
+
+export const zAutogrowOptions = z.object({
+  ...zBaseInputOptions.shape,
+  template: z.object({
+    input: zComfyInputsSpec,
+    names: z.array(z.string()).optional(),
+    max: z.number().optional(),
+    //Backend defines as mandatory with min 1, Frontend is more forgiving
+    min: z.number().optional(),
+    prefix: z.string().optional()
+  })
+})
+
+export const zDynamicComboInputSpec = z.tuple([
+  z.literal('COMFY_DYNAMICCOMBO_V3'),
+  zBaseInputOptions.extend({
+    options: z.array(
+      z.object({
+        inputs: zComfyInputsSpec,
+        key: z.string()
+      })
+    )
+  })
+])
 
 // `/object_info`
 export type ComfyInputsSpec = z.infer<typeof zComfyInputsSpec>
@@ -230,26 +318,17 @@ export type ComfyOutputTypesSpec = z.infer<typeof zComfyOutputTypesSpec>
 export type ComfyNodeDef = z.infer<typeof zComfyNodeDef>
 export type RemoteWidgetConfig = z.infer<typeof zRemoteWidgetConfig>
 
-// Input specs
-export type IntInputOptions = z.infer<typeof zIntInputOptions>
-export type FloatInputOptions = z.infer<typeof zFloatInputOptions>
-export type BooleanInputOptions = z.infer<typeof zBooleanInputOptions>
-export type StringInputOptions = z.infer<typeof zStringInputOptions>
 export type ComboInputOptions = z.infer<typeof zComboInputOptions>
-export type BaseInputOptions = z.infer<typeof zBaseInputOptions>
 export type NumericInputOptions = z.infer<typeof zNumericInputOptions>
 
 export type IntInputSpec = z.infer<typeof zIntInputSpec>
 export type FloatInputSpec = z.infer<typeof zFloatInputSpec>
-export type BooleanInputSpec = z.infer<typeof zBooleanInputSpec>
-export type StringInputSpec = z.infer<typeof zStringInputSpec>
 export type ComboInputSpec = z.infer<typeof zComboInputSpec>
 export type ComboInputSpecV2 = z.infer<typeof zComboInputSpecV2>
-export type CustomInputSpec = z.infer<typeof zCustomInputSpec>
 export type InputSpec = z.infer<typeof zInputSpec>
 
 export function validateComfyNodeDef(
-  data: any,
+  data: unknown,
   onError: (error: string) => void = console.warn
 ): ComfyNodeDef | null {
   const result = zComfyNodeDef.safeParse(data)

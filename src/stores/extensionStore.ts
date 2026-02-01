@@ -6,9 +6,9 @@ import type { ComfyExtension } from '@/types/comfy'
 /**
  * These extensions are always active, even if they are disabled in the setting.
  */
-export const ALWAYS_ENABLED_EXTENSIONS: readonly string[] = []
+const ALWAYS_ENABLED_EXTENSIONS: readonly string[] = []
 
-export const ALWAYS_DISABLED_EXTENSIONS: readonly string[] = [
+const ALWAYS_DISABLED_EXTENSIONS: readonly string[] = [
   // pysssss.Locking is replaced by pin/unpin in ComfyUI core.
   // https://github.com/Comfy-Org/litegraph.js/pull/117
   'pysssss.Locking',
@@ -16,7 +16,11 @@ export const ALWAYS_DISABLED_EXTENSIONS: readonly string[] = [
   // pysssss.SnapToGrid tries to write global app.shiftDown state, which is no longer
   // allowed since v1.3.12.
   // https://github.com/Comfy-Org/ComfyUI_frontend/issues/1176
-  'pysssss.SnapToGrid'
+  'pysssss.SnapToGrid',
+  // Favicon status is implemented in ComfyUI core in v1.20.
+  // https://github.com/Comfy-Org/ComfyUI_frontend/pull/3880
+  'pysssss.FaviconStatus',
+  'KJNodes.browserstatus'
 ]
 
 export const useExtensionStore = defineStore('extension', () => {
@@ -35,6 +39,8 @@ export const useExtensionStore = defineStore('extension', () => {
       (name) => !(name in extensionByName.value)
     )
   })
+
+  const isExtensionInstalled = (name: string) => name in extensionByName.value
 
   const isExtensionEnabled = (name: string) =>
     !disabledExtensionNames.value.has(name)
@@ -59,7 +65,7 @@ export const useExtensionStore = defineStore('extension', () => {
     }
 
     if (disabledExtensionNames.value.has(extension.name)) {
-      console.log(`Extension ${extension.name} is disabled.`)
+      console.warn(`Extension ${extension.name} is disabled.`)
     }
 
     extensionByName.value[extension.name] = markRaw(extension)
@@ -96,6 +102,7 @@ export const useExtensionStore = defineStore('extension', () => {
     extensions,
     enabledExtensions,
     inactiveDisabledExtensionNames,
+    isExtensionInstalled,
     isExtensionEnabled,
     isExtensionReadOnly,
     registerExtension,

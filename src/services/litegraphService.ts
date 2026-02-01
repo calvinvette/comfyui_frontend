@@ -1,23 +1,41 @@
+import _ from 'es-toolkit/compat'
+
+import { downloadFile } from '@/base/common/downloadUtil'
+import { useSelectedLiteGraphItems } from '@/composables/canvas/useSelectedLiteGraphItems'
+import { useSubgraphOperations } from '@/composables/graph/useSubgraphOperations'
+import { useNodeAnimatedImage } from '@/composables/node/useNodeAnimatedImage'
+import { useNodeCanvasImagePreview } from '@/composables/node/useNodeCanvasImagePreview'
+import { useNodeImage, useNodeVideo } from '@/composables/node/useNodeImage'
+import { addWidgetPromotionOptions } from '@/core/graph/subgraph/proxyWidgetUtils'
+import { applyDynamicInputs } from '@/core/graph/widgets/dynamicWidgets'
+import { st, t } from '@/i18n'
 import {
-  type IContextMenuValue,
-  type INodeInputSlot,
+  LGraphCanvas,
   LGraphEventMode,
   LGraphNode,
   LiteGraph,
   RenderShape,
-  type Vector2
-} from '@comfyorg/litegraph'
+  SubgraphNode,
+  createBounds
+} from '@/lib/litegraph/src/litegraph'
 import type {
+  IContextMenuValue,
+  Point,
+  Subgraph
+} from '@/lib/litegraph/src/litegraph'
+import type {
+  ExportedSubgraphInstance,
+  ISerialisableNodeInput,
   ISerialisableNodeOutput,
   ISerialisedNode
-} from '@comfyorg/litegraph/dist/types/serialisation'
-import _ from 'lodash'
-
-import { useNodeAnimatedImage } from '@/composables/node/useNodeAnimatedImage'
-import { useNodeCanvasImagePreview } from '@/composables/node/useNodeCanvasImagePreview'
-import { useNodeImage, useNodeVideo } from '@/composables/node/useNodeImage'
-import { st, t } from '@/i18n'
-import type { NodeId } from '@/schemas/comfyWorkflowSchema'
+} from '@/lib/litegraph/src/types/serialisation'
+import type { IBaseWidget } from '@/lib/litegraph/src/types/widgets'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { useToastStore } from '@/platform/updates/common/toastStore'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
+import type { NodeId } from '@/platform/workflow/validation/schemas/workflowSchema'
+import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
+import { useDialogService } from '@/services/dialogService'
 import { transformInputSpecV2ToV1 } from '@/schemas/nodeDef/migration'
 import type {
   ComfyNodeDef as ComfyNodeDefV2,
@@ -26,11 +44,15 @@ import type {
 } from '@/schemas/nodeDef/nodeDefSchemaV2'
 import type { ComfyNodeDef as ComfyNodeDefV1 } from '@/schemas/nodeDefSchema'
 import { ComfyApp, app } from '@/scripts/app'
+import { isComponentWidget, isDOMWidget } from '@/scripts/domWidget'
 import { $el } from '@/scripts/ui'
-import { useCanvasStore } from '@/stores/graphStore'
+import { useDomWidgetStore } from '@/stores/domWidgetStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useNodeOutputStore } from '@/stores/imagePreviewStore'
 import { ComfyNodeDefImpl } from '@/stores/nodeDefStore'
-import { useToastStore } from '@/stores/toastStore'
+import { useSubgraphStore } from '@/stores/subgraphStore'
+import { useFavoritedWidgetsStore } from '@/stores/workspace/favoritedWidgetsStore'
+import { useRightSidePanelStore } from '@/stores/workspace/rightSidePanelStore'
 import { useWidgetStore } from '@/stores/widgetStore'
 import { normalizeI18nKey } from '@/utils/formatUtil'
 import {
@@ -38,12 +60,60 @@ import {
   isVideoNode,
   migrateWidgetsValues
 } from '@/utils/litegraphUtil'
+import { getOrderedInputSpecs } from '@/workbench/utils/nodeDefOrderingUtil'
 
 import { useExtensionService } from './extensionService'
+import { useMaskEditor } from '@/composables/maskeditor/useMaskEditor'
 
-const PRIMITIVE_TYPES = new Set(['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'COMBO'])
+export interface HasInitialMinSize {
+  _initialMinSize: { width: number; height: number }
+}
+
 export const CONFIG = Symbol()
 export const GET_CONFIG = Symbol()
+
+export function getExtraOptionsForWidget(
+  node: LGraphNode,
+  widget: IBaseWidget
+) {
+  const options: IContextMenuValue[] = []
+  const input = node.inputs.find((inp) => inp.widget?.name === widget.name)
+
+  if (input) {
+    options.unshift({
+      content: `${t('contextMenu.RenameWidget')}: ${widget.label ?? widget.name}`,
+      callback: async () => {
+        const newLabel = await useDialogService().prompt({
+          title: t('g.rename'),
+          message: t('g.enterNewName') + ':',
+          defaultValue: widget.label,
+          placeholder: widget.name
+        })
+        if (newLabel === null) return
+        widget.label = newLabel || undefined
+        input.label = newLabel || undefined
+        widget.callback?.(widget.value)
+        useCanvasStore().canvas?.setDirty(true)
+      }
+    })
+  }
+
+  const favoritedWidgetsStore = useFavoritedWidgetsStore()
+  const isFavorited = favoritedWidgetsStore.isFavorited(node, widget.name)
+  options.unshift({
+    content: isFavorited
+      ? `${t('contextMenu.UnfavoriteWidget')}: ${widget.label ?? widget.name}`
+      : `${t('contextMenu.FavoriteWidget')}: ${widget.label ?? widget.name}`,
+    callback: () => {
+      favoritedWidgetsStore.toggleFavorite(node, widget.name)
+    }
+  })
+
+  if (node.graph && !node.graph.isRootGraph) {
+    addWidgetPromotionOptions(options, widget, node)
+  }
+  return options
+}
 
 /**
  * Service that augments litegraph with ComfyUI specific functionality.
@@ -53,164 +123,232 @@ export const useLitegraphService = () => {
   const toastStore = useToastStore()
   const widgetStore = useWidgetStore()
   const canvasStore = useCanvasStore()
+  const { toggleSelectedNodesMode } = useSelectedLiteGraphItems()
 
-  async function registerNodeDef(nodeId: string, nodeDefV1: ComfyNodeDefV1) {
-    const node = class ComfyNode extends LGraphNode {
-      static comfyClass: string
-      static title: string
-      static category: string
-      static nodeData: ComfyNodeDefV1 & ComfyNodeDefV2
+  /**
+   * @internal The key for the node definition in the i18n file.
+   */
+  function nodeKey(node: LGraphNode): string {
+    return `nodeDefs.${normalizeI18nKey(node.constructor.nodeData!.name)}`
+  }
+  /**
+   * @internal Add input sockets to the node. (No widget)
+   */
+  function addInputSocket(node: LGraphNode, inputSpec: InputSpec) {
+    const inputName = inputSpec.name
+    const nameKey = `${nodeKey(node)}.inputs.${normalizeI18nKey(inputName)}.name`
+    const widgetConstructor = widgetStore.widgets.get(
+      inputSpec.widgetType ?? inputSpec.type
+    )
+    if (
+      (widgetConstructor && !inputSpec.forceInput) ||
+      applyDynamicInputs(node, inputSpec)
+    )
+      return
 
-      /**
-       * @internal The initial minimum size of the node.
-       */
-      #initialMinSize = { width: 1, height: 1 }
-      /**
-       * @internal The key for the node definition in the i18n file.
-       */
-      get #nodeKey(): string {
-        return `nodeDefs.${normalizeI18nKey(ComfyNode.nodeData.name)}`
+    const input = node.addInput(inputName, inputSpec.type, {
+      shape: inputSpec.isOptional ? RenderShape.HollowCircle : undefined,
+      localized_name: st(nameKey, inputName)
+    })
+    input.label ??= inputSpec.display_name
+  }
+  /**
+   * @internal Setup stroke styles for the node under various conditions.
+   */
+  function setupStrokeStyles(node: LGraphNode) {
+    node.strokeStyles['running'] = function (this: LGraphNode) {
+      const nodeId = String(this.id)
+      const nodeLocatorId = useWorkflowStore().nodeIdToNodeLocatorId(nodeId)
+      const state =
+        useExecutionStore().nodeLocationProgressStates[nodeLocatorId]?.state
+      if (state === 'running') {
+        return { color: '#0f0' }
       }
+    }
+    node.strokeStyles['dragOver'] = function (this: LGraphNode) {
+      if (app.dragOverNode?.id == this.id) {
+        return { color: 'dodgerblue' }
+      }
+    }
+    node.strokeStyles['executionError'] = function (this: LGraphNode) {
+      if (app.lastExecutionError?.node_id == this.id) {
+        return { color: '#f0f', lineWidth: 2 }
+      }
+    }
+  }
 
-      constructor(title: string) {
-        super(title)
-        this.#setupStrokeStyles()
-        this.#addInputs(ComfyNode.nodeData.inputs)
-        this.#addOutputs(ComfyNode.nodeData.outputs)
-        this.#setInitialSize()
+  /**
+   * Utility function. Implemented for use with dynamic widgets
+   */
+  function addNodeInput(node: LGraphNode, inputSpec: InputSpec) {
+    addInputSocket(node, inputSpec)
+    addInputWidget(node, inputSpec)
+  }
+
+  /**
+   * @internal Add a widget to the node. For both primitive types and custom widgets
+   * (unless `socketless`), an input socket is also added.
+   */
+  function addInputWidget(node: LGraphNode, inputSpec: InputSpec) {
+    const widgetInputSpec = { ...inputSpec }
+    if (inputSpec.widgetType) {
+      widgetInputSpec.type = inputSpec.widgetType
+    }
+    const inputName = inputSpec.name
+    const nameKey = `${nodeKey(node)}.inputs.${normalizeI18nKey(inputName)}.name`
+    const widgetConstructor = widgetStore.widgets.get(widgetInputSpec.type)
+    if (!widgetConstructor || inputSpec.forceInput) return
+
+    const {
+      widget,
+      minWidth = 1,
+      minHeight = 1
+    } = widgetConstructor(
+      node,
+      inputName,
+      transformInputSpecV2ToV1(widgetInputSpec),
+      app
+    ) ?? {}
+
+    if (widget) {
+      widget.label = st(
+        nameKey,
+        widget.label ?? widgetInputSpec.display_name ?? inputName
+      )
+      widget.options ??= {}
+      Object.assign(widget.options, {
+        advanced: inputSpec.advanced,
+        hidden: inputSpec.hidden
+      })
+    }
+
+    if (!widget?.options?.socketless) {
+      const inputSpecV1 = transformInputSpecV2ToV1(widgetInputSpec)
+      node.addInput(inputName, inputSpec.type, {
+        shape: inputSpec.isOptional ? RenderShape.HollowCircle : undefined,
+        localized_name: st(nameKey, inputName),
+        widget: { name: inputName, [GET_CONFIG]: () => inputSpecV1 }
+      })
+    }
+    const castedNode = node as LGraphNode & HasInitialMinSize
+    castedNode._initialMinSize.width = Math.max(
+      castedNode._initialMinSize.width,
+      minWidth
+    )
+    castedNode._initialMinSize.height = Math.max(
+      castedNode._initialMinSize.height,
+      minHeight
+    )
+  }
+
+  /**
+   * @internal Add inputs to the node.
+   */
+  function addInputs(node: LGraphNode, inputs: Record<string, InputSpec>) {
+    // Use input_order if available to ensure consistent widget ordering
+    //@ts-expect-error was ComfyNode.nodeData as ComfyNodeDefImpl
+    const nodeDefImpl = node.constructor.nodeData as ComfyNodeDefImpl
+    const orderedInputSpecs = getOrderedInputSpecs(nodeDefImpl, inputs)
+
+    // Create sockets and widgets in the determined order
+    for (const inputSpec of orderedInputSpecs) addInputSocket(node, inputSpec)
+    for (const inputSpec of orderedInputSpecs) addInputWidget(node, inputSpec)
+  }
+
+  /**
+   * @internal Add outputs to the node.
+   */
+  function addOutputs(node: LGraphNode, outputs: OutputSpec[]) {
+    for (const output of outputs) {
+      const { name, is_list } = output
+      // TODO: Fix the typing at the node spec level
+      const type = output.type === 'COMFY_MATCHTYPE_V3' ? '*' : output.type
+      const shapeOptions = is_list ? { shape: LiteGraph.GRID_SHAPE } : {}
+      const nameKey = `${nodeKey(node)}.outputs.${output.index}.name`
+      const typeKey = `dataTypes.${normalizeI18nKey(type)}`
+      const outputOptions = {
+        ...shapeOptions,
+        // If the output name is different from the output type, use the output name.
+        // e.g.
+        // - type ("INT"); name ("Positive") => translate name
+        // - type ("FLOAT"); name ("FLOAT") => translate type
+        localized_name: type !== name ? st(nameKey, name) : st(typeKey, name)
+      }
+      node.addOutput(name, type, outputOptions)
+    }
+  }
+
+  /**
+   * @internal Set the initial size of the node.
+   */
+  function setInitialSize(node: LGraphNode) {
+    const s = node.computeSize()
+    // Expand the width a little to fit widget values on screen.
+    const pad =
+      node.widgets?.length &&
+      !useSettingStore().get('LiteGraph.Node.DefaultPadding')
+    const castedNode = node as LGraphNode & HasInitialMinSize
+    s[0] = Math.max(castedNode._initialMinSize.width, s[0] + (pad ? 60 : 0))
+    s[1] = Math.max(castedNode._initialMinSize.height, s[1])
+    node.setSize(s)
+  }
+
+  function registerSubgraphNodeDef(
+    nodeDefV1: ComfyNodeDefV1,
+    subgraph: Subgraph,
+    instanceData: ExportedSubgraphInstance
+  ) {
+    const node = class ComfyNode
+      extends SubgraphNode
+      implements HasInitialMinSize
+    {
+      static comfyClass: string
+      static override title: string
+      static override category: string
+      static override nodeData: ComfyNodeDefV1 & ComfyNodeDefV2
+
+      _initialMinSize = { width: 1, height: 1 }
+
+      constructor() {
+        super(app.rootGraph, subgraph, instanceData)
+
+        // Set up event listener for promoted widget registration
+        subgraph.events.addEventListener('widget-promoted', (event) => {
+          const { widget } = event.detail
+          // Only handle DOM widgets
+          if (!isDOMWidget(widget) && !isComponentWidget(widget)) return
+
+          const domWidgetStore = useDomWidgetStore()
+          if (!domWidgetStore.widgetStates.has(widget.id)) {
+            domWidgetStore.registerWidget(widget)
+            // Set initial visibility based on whether the widget's node is in the current graph
+            const widgetState = domWidgetStore.widgetStates.get(widget.id)
+            if (widgetState) {
+              const currentGraph = canvasStore.getCanvas().graph
+              widgetState.visible =
+                currentGraph?.nodes.includes(widget.node) ?? false
+            }
+          }
+        })
+
+        // Set up event listener for promoted widget removal
+        subgraph.events.addEventListener('widget-demoted', (event) => {
+          const { widget } = event.detail
+          // Only handle DOM widgets
+          if (!isDOMWidget(widget) && !isComponentWidget(widget)) return
+
+          const domWidgetStore = useDomWidgetStore()
+          if (domWidgetStore.widgetStates.has(widget.id)) {
+            domWidgetStore.unregisterWidget(widget.id)
+          }
+        })
+
+        setupStrokeStyles(this)
+        addInputs(this, ComfyNode.nodeData.inputs)
+        addOutputs(this, ComfyNode.nodeData.outputs)
+        setInitialSize(this)
         this.serialize_widgets = true
         void extensionService.invokeExtensionsAsync('nodeCreated', this)
-      }
-
-      /**
-       * @internal Setup stroke styles for the node under various conditions.
-       */
-      #setupStrokeStyles() {
-        this.strokeStyles['running'] = function (this: LGraphNode) {
-          if (this.id == app.runningNodeId) {
-            return { color: '#0f0' }
-          }
-        }
-        this.strokeStyles['nodeError'] = function (this: LGraphNode) {
-          if (app.lastNodeErrors?.[this.id]?.errors) {
-            return { color: 'red' }
-          }
-        }
-        this.strokeStyles['dragOver'] = function (this: LGraphNode) {
-          if (app.dragOverNode?.id == this.id) {
-            return { color: 'dodgerblue' }
-          }
-        }
-        this.strokeStyles['executionError'] = function (this: LGraphNode) {
-          if (app.lastExecutionError?.node_id == this.id) {
-            return { color: '#f0f', lineWidth: 2 }
-          }
-        }
-      }
-
-      /**
-       * @internal Add input sockets to the node. (No widget)
-       */
-      #addInputSocket(inputSpec: InputSpec) {
-        const inputName = inputSpec.name
-        const nameKey = `${this.#nodeKey}.inputs.${normalizeI18nKey(inputName)}.name`
-        const widgetConstructor = widgetStore.widgets.get(inputSpec.type)
-        if (widgetConstructor && !inputSpec.forceInput) return
-
-        this.addInput(inputName, inputSpec.type, {
-          shape: inputSpec.isOptional ? RenderShape.HollowCircle : undefined,
-          localized_name: st(nameKey, inputName)
-        })
-      }
-
-      /**
-       * @internal Add a widget to the node. For primitive types, an input socket is also added.
-       */
-      #addInputWidget(inputSpec: InputSpec) {
-        const inputName = inputSpec.name
-        const nameKey = `${this.#nodeKey}.inputs.${normalizeI18nKey(inputName)}.name`
-        const widgetConstructor = widgetStore.widgets.get(inputSpec.type)
-        if (!widgetConstructor || inputSpec.forceInput) return
-
-        const {
-          widget,
-          minWidth = 1,
-          minHeight = 1
-        } = widgetConstructor(
-          this,
-          inputName,
-          transformInputSpecV2ToV1(inputSpec),
-          app
-        ) ?? {}
-
-        if (widget) {
-          widget.label = st(nameKey, widget.label ?? inputName)
-          widget.options ??= {}
-          Object.assign(widget.options, {
-            advanced: inputSpec.advanced,
-            hidden: inputSpec.hidden
-          })
-        }
-
-        if (PRIMITIVE_TYPES.has(inputSpec.type)) {
-          const inputSpecV1 = transformInputSpecV2ToV1(inputSpec)
-          this.addInput(inputName, inputSpec.type, {
-            shape: inputSpec.isOptional ? RenderShape.HollowCircle : undefined,
-            localized_name: st(nameKey, inputName),
-            widget: { name: inputName, [GET_CONFIG]: () => inputSpecV1 }
-          })
-        }
-
-        this.#initialMinSize.width = Math.max(
-          this.#initialMinSize.width,
-          minWidth
-        )
-        this.#initialMinSize.height = Math.max(
-          this.#initialMinSize.height,
-          minHeight
-        )
-      }
-
-      /**
-       * @internal Add inputs to the node.
-       */
-      #addInputs(inputs: Record<string, InputSpec>) {
-        for (const inputSpec of Object.values(inputs))
-          this.#addInputSocket(inputSpec)
-        for (const inputSpec of Object.values(inputs))
-          this.#addInputWidget(inputSpec)
-      }
-
-      /**
-       * @internal Add outputs to the node.
-       */
-      #addOutputs(outputs: OutputSpec[]) {
-        for (const output of outputs) {
-          const { name, type, is_list } = output
-          const shapeOptions = is_list ? { shape: LiteGraph.GRID_SHAPE } : {}
-          const nameKey = `${this.#nodeKey}.outputs.${output.index}.name`
-          const typeKey = `dataTypes.${normalizeI18nKey(type)}`
-          const outputOptions = {
-            ...shapeOptions,
-            // If the output name is different from the output type, use the output name.
-            // e.g.
-            // - type ("INT"); name ("Positive") => translate name
-            // - type ("FLOAT"); name ("FLOAT") => translate type
-            localized_name:
-              type !== name ? st(nameKey, name) : st(typeKey, name)
-          }
-          this.addOutput(name, type, outputOptions)
-        }
-      }
-
-      /**
-       * @internal Set the initial size of the node.
-       */
-      #setInitialSize() {
-        const s = this.computeSize()
-        s[0] = Math.max(this.#initialMinSize.width, s[0] * 1.5)
-        s[1] = Math.max(this.#initialMinSize.height, s[1])
-        this.setSize(s)
       }
 
       /**
@@ -222,7 +360,115 @@ export const useLitegraphService = () => {
 
         // Note: input name is unique in a node definition, so we can lookup
         // input by name.
-        const inputByName = new Map<string, INodeInputSlot>(
+        const inputByName = new Map<string, ISerialisableNodeInput>(
+          data.inputs?.map((input) => [input.name, input]) ?? []
+        )
+        // Inputs defined by the node definition.
+        const definedInputNames = new Set(
+          this.inputs.map((input) => input.name)
+        )
+        const definedInputs = this.inputs.map((input) => {
+          const inputData = inputByName.get(input.name)
+          return inputData
+            ? {
+                ...inputData,
+                // Whether the input has associated widget follows the
+                // original node definition.
+                ..._.pick(input, RESERVED_KEYS.concat('widget'))
+              }
+            : input
+        })
+        // Extra inputs that potentially dynamically added by custom js logic.
+        const extraInputs = data.inputs?.filter(
+          (input) => !definedInputNames.has(input.name)
+        )
+        data.inputs = [...definedInputs, ...(extraInputs ?? [])]
+
+        // Note: output name is not unique, so we cannot lookup output by name.
+        // Use index instead.
+        data.outputs = _.zip(this.outputs, data.outputs).map(
+          ([output, outputData]) => {
+            // If there are extra outputs in the serialised node, use them directly.
+            // There are currently custom nodes that dynamically add outputs via
+            // js logic.
+            if (!output) return outputData as ISerialisableNodeOutput
+
+            return outputData
+              ? {
+                  ...outputData,
+                  ..._.pick(output, RESERVED_KEYS)
+                }
+              : output
+          }
+        )
+
+        data.widgets_values = migrateWidgetsValues(
+          ComfyNode.nodeData.inputs,
+          this.widgets ?? [],
+          data.widgets_values ?? []
+        )
+
+        super.configure(data)
+      }
+    }
+
+    addNodeContextMenuHandler(node)
+    addDrawBackgroundHandler(node)
+    addNodeKeyHandler(node)
+    // Note: Some extensions expects node.comfyClass to be set in
+    // `beforeRegisterNodeDef`.
+    node.prototype.comfyClass = nodeDefV1.name
+    node.comfyClass = nodeDefV1.name
+
+    const nodeDef = new ComfyNodeDefImpl(nodeDefV1)
+    node.nodeData = nodeDef
+    LiteGraph.registerNodeType(subgraph.id, node)
+    // Note: Do not following assignments before `LiteGraph.registerNodeType`
+    // because `registerNodeType` will overwrite the assignments.
+    node.category = nodeDef.category
+    node.skip_list = true
+    node.title = nodeDef.display_name || nodeDef.name
+  }
+
+  async function registerNodeDef(nodeId: string, nodeDefV1: ComfyNodeDefV1) {
+    const node = class ComfyNode
+      extends LGraphNode
+      implements HasInitialMinSize
+    {
+      static comfyClass: string
+      static override title: string
+      static override category: string
+      static override nodeData: ComfyNodeDefV1 & ComfyNodeDefV2
+
+      _initialMinSize = { width: 1, height: 1 }
+
+      constructor(title: string) {
+        super(title)
+        setupStrokeStyles(this)
+        addInputs(this, ComfyNode.nodeData.inputs)
+        addOutputs(this, ComfyNode.nodeData.outputs)
+        setInitialSize(this)
+        this.serialize_widgets = true
+
+        // Mark API Nodes yellow by default to distinguish with other nodes.
+        if (ComfyNode.nodeData.api_node) {
+          this.color = LGraphCanvas.node_colors.yellow.color
+          this.bgcolor = LGraphCanvas.node_colors.yellow.bgcolor
+        }
+
+        void extensionService.invokeExtensionsAsync('nodeCreated', this)
+      }
+
+      /**
+       * Configure the node from a serialised node. Keep 'name', 'type', 'shape',
+       * and 'localized_name' information from the original node definition.
+       */
+      override configure(data: ISerialisedNode): void {
+        const RESERVED_KEYS = ['name', 'type', 'shape', 'localized_name']
+
+        // Note: input name is unique in a node definition, so we can lookup
+        // input by name.
+        const inputByName = new Map<string, ISerialisableNodeInput>(
           data.inputs?.map((input) => [input.name, input]) ?? []
         )
         // Inputs defined by the node definition.
@@ -294,6 +540,13 @@ export const useLitegraphService = () => {
     // because `registerNodeType` will overwrite the assignments.
     node.category = nodeDef.category
     node.title = nodeDef.display_name || nodeDef.name
+
+    // Set skip_list for dev-only nodes based on current DevMode setting
+    // This ensures nodes registered after initial load respect the current setting
+    if (nodeDef.dev_only) {
+      const settingStore = useSettingStore()
+      node.skip_list = !settingStore.get('Comfy.DevMode')
+    }
   }
 
   /**
@@ -307,7 +560,6 @@ export const useLitegraphService = () => {
       return [
         {
           content: 'Copy Image',
-          // @ts-expect-error: async callback is not accepted by litegraph
           callback: async () => {
             const url = new URL(img.src)
             url.searchParams.delete('preview')
@@ -381,7 +633,7 @@ export const useLitegraphService = () => {
       ]
     }
 
-    node.prototype.getExtraMenuOptions = function (_, options) {
+    node.prototype.getExtraMenuOptions = function (canvas, options) {
       if (this.imgs) {
         // If this node has images then we add an open in new tab item
         let img
@@ -406,18 +658,10 @@ export const useLitegraphService = () => {
             {
               content: 'Save Image',
               callback: () => {
-                const a = document.createElement('a')
                 const url = new URL(img.src)
                 url.searchParams.delete('preview')
-                a.href = url.toString()
-                a.setAttribute(
-                  'download',
-                  // @ts-expect-error fixme ts strict error
-                  new URLSearchParams(url.search).get('filename')
-                )
-                document.body.append(a)
-                a.click()
-                requestAnimationFrame(() => a.remove())
+                const filename = new URLSearchParams(url.search).get('filename')
+                downloadFile(url.toString(), filename ?? undefined)
               }
             }
           )
@@ -427,15 +671,8 @@ export const useLitegraphService = () => {
       options.push({
         content: 'Bypass',
         callback: () => {
-          const mode =
-            this.mode === LGraphEventMode.BYPASS
-              ? LGraphEventMode.ALWAYS
-              : LGraphEventMode.BYPASS
-          for (const item of app.canvas.selectedItems) {
-            if (item instanceof LGraphNode) item.mode = mode
-          }
-          // @ts-expect-error fixme ts strict error
-          this.graph.change()
+          toggleSelectedNodesMode(LGraphEventMode.BYPASS)
+          canvas.setDirty(true, true)
         }
       })
 
@@ -459,19 +696,90 @@ export const useLitegraphService = () => {
 
         if (isImageNode(this)) {
           options.push({
-            content: 'Open in MaskEditor',
+            content: 'Open in MaskEditor | Image Canvas',
             callback: () => {
-              ComfyApp.copyToClipspace(this)
-              // @ts-expect-error fixme ts strict error
-              ComfyApp.clipspace_return_node = this
-              // @ts-expect-error fixme ts strict error
-              ComfyApp.open_maskeditor()
+              useMaskEditor().openMaskEditor(this)
             }
           })
         }
       }
-
+      if (this instanceof SubgraphNode) {
+        options.unshift(
+          {
+            content: 'Edit Subgraph Widgets',
+            callback: () => {
+              useRightSidePanelStore().openPanel('subgraph')
+            }
+          },
+          {
+            content: 'Unpack Subgraph',
+            callback: () => {
+              const { unpackSubgraph } = useSubgraphOperations()
+              unpackSubgraph()
+            }
+          }
+        )
+      }
+      const [x, y] = canvas.graph_mouse
+      const overWidget = this.getWidgetOnPos(x, y, true)
+      if (overWidget)
+        options.unshift(...getExtraOptionsForWidget(this, overWidget))
       return []
+    }
+  }
+  function updatePreviews(node: LGraphNode, callback?: () => void) {
+    try {
+      unsafeUpdatePreviews.call(node, callback)
+    } catch (error) {
+      console.error('Error drawing node background', error)
+    }
+  }
+  function unsafeUpdatePreviews(this: LGraphNode, callback?: () => void) {
+    if (this.flags.collapsed) return
+
+    const nodeOutputStore = useNodeOutputStore()
+    const { showAnimatedPreview, removeAnimatedPreview } =
+      useNodeAnimatedImage()
+    const { showCanvasImagePreview, removeCanvasImagePreview } =
+      useNodeCanvasImagePreview()
+
+    const output = nodeOutputStore.getNodeOutputs(this)
+    const preview = nodeOutputStore.getNodePreviews(this)
+
+    const isNewOutput = output && this.images !== output.images
+    const isNewPreview = preview && this.preview !== preview
+
+    if (isNewPreview) this.preview = preview
+    if (isNewOutput) this.images = output.images
+
+    if (isNewOutput || isNewPreview) {
+      this.animatedImages = output?.animated?.find(Boolean)
+
+      const isAnimatedWebp =
+        this.animatedImages &&
+        output?.images?.some((img) => img.filename?.includes('webp'))
+      const isAnimatedPng =
+        this.animatedImages &&
+        output?.images?.some((img) => img.filename?.includes('png'))
+      const isVideo =
+        (this.animatedImages && !isAnimatedWebp && !isAnimatedPng) ||
+        isVideoNode(this)
+      if (isVideo) {
+        useNodeVideo(this, callback).showPreview()
+      } else {
+        useNodeImage(this, callback).showPreview()
+      }
+    }
+
+    // Nothing to do
+    if (!this.imgs?.length) return
+
+    if (this.animatedImages) {
+      removeCanvasImagePreview(this)
+      showAnimatedPreview(this)
+    } else {
+      removeAnimatedPreview(this)
+      showCanvasImagePreview(this)
     }
   }
 
@@ -489,59 +797,8 @@ export const useLitegraphService = () => {
         'node.setSizeForImage is deprecated. Now it has no effect. Please remove the call to it.'
       )
     }
-
-    function unsafeDrawBackground(this: LGraphNode) {
-      if (this.flags.collapsed) return
-
-      const nodeOutputStore = useNodeOutputStore()
-      const { showAnimatedPreview, removeAnimatedPreview } =
-        useNodeAnimatedImage()
-      const { showCanvasImagePreview, removeCanvasImagePreview } =
-        useNodeCanvasImagePreview()
-
-      const output = nodeOutputStore.getNodeOutputs(this)
-      const preview = nodeOutputStore.getNodePreviews(this)
-
-      const isNewOutput = output && this.images !== output.images
-      const isNewPreview = preview && this.preview !== preview
-
-      if (isNewPreview) this.preview = preview
-      if (isNewOutput) this.images = output.images
-
-      if (isNewOutput || isNewPreview) {
-        this.animatedImages = output?.animated?.find(Boolean)
-
-        const isAnimatedWebp =
-          this.animatedImages &&
-          // @ts-expect-error fixme ts strict error
-          output.images.some((img) => img.filename?.includes('webp'))
-        const isVideo =
-          (this.animatedImages && !isAnimatedWebp) || isVideoNode(this)
-        if (isVideo) {
-          useNodeVideo(this).showPreview()
-        } else {
-          useNodeImage(this).showPreview()
-        }
-      }
-
-      // Nothing to do
-      if (!this.imgs?.length) return
-
-      if (this.animatedImages) {
-        removeCanvasImagePreview(this)
-        showAnimatedPreview(this)
-      } else {
-        removeAnimatedPreview(this)
-        showCanvasImagePreview(this)
-      }
-    }
-
     node.prototype.onDrawBackground = function () {
-      try {
-        unsafeDrawBackground.call(this)
-      } catch (error) {
-        console.error('Error drawing node background', error)
-      }
+      updatePreviews(this)
     }
   }
 
@@ -596,28 +853,60 @@ export const useLitegraphService = () => {
   ): LGraphNode {
     options.pos ??= getCanvasCenter()
 
+    if (nodeDef.name.startsWith(useSubgraphStore().typePrefix)) {
+      const canvas = canvasStore.getCanvas()
+      const bp = useSubgraphStore().getBlueprint(nodeDef.name)
+      const items: object = {
+        nodes: bp.nodes,
+        subgraphs: bp.definitions?.subgraphs
+      }
+      const results = canvas._deserializeItems(items, {
+        position: options.pos
+      })
+      if (!results) throw new Error('Failed to add subgraph blueprint')
+      const node = results.nodes.values().next().value
+      if (!node)
+        throw new Error(
+          'Subgraph blueprint was added, but failed to resolve a subgraph Node'
+        )
+      return node
+    }
+
     const node = LiteGraph.createNode(
       nodeDef.name,
       nodeDef.display_name,
       options
     )
 
+    const graph = useWorkflowStore().activeSubgraph ?? app.graph
+
     // @ts-expect-error fixme ts strict error
-    app.graph.add(node)
+    graph.add(node)
     // @ts-expect-error fixme ts strict error
     return node
   }
 
-  function getCanvasCenter(): Vector2 {
+  function getCanvasCenter(): Point {
     const dpi = Math.max(window.devicePixelRatio ?? 1, 1)
-    const [x, y, w, h] = app.canvas.ds.visible_area
+    const visibleArea = app.canvas?.ds?.visible_area
+    if (!visibleArea) {
+      return [0, 0]
+    }
+    const [x, y, w, h] = visibleArea
     return [x + w / dpi / 2, y + h / dpi / 2]
   }
 
   function goToNode(nodeId: NodeId) {
-    const graphNode = app.graph.getNodeById(nodeId)
+    const graphNode = app.canvas.graph?.getNodeById(nodeId)
     if (!graphNode) return
     app.canvas.animateToBounds(graphNode.boundingRect)
+  }
+
+  function ensureBounds(nodes: LGraphNode[]) {
+    for (const node of nodes) {
+      if (!node.boundingRect.every((i) => i === 0)) continue
+      node.updateArea()
+    }
   }
 
   /**
@@ -632,11 +921,28 @@ export const useLitegraphService = () => {
     canvas.setDirty(true, true)
   }
 
+  function fitView() {
+    const canvas = canvasStore.getCanvas()
+    const nodes = canvas.graph?.nodes
+    if (!nodes) return
+    ensureBounds(nodes)
+    const bounds = createBounds(nodes)
+    if (!bounds) return
+
+    canvas.ds.fitToBounds(bounds)
+    canvas.setDirty(true, true)
+  }
+
   return {
     registerNodeDef,
+    registerSubgraphNodeDef,
     addNodeOnGraph,
+    addNodeInput,
     getCanvasCenter,
+    getExtraOptionsForWidget,
     goToNode,
-    resetView
+    resetView,
+    fitView,
+    updatePreviews
   }
 }

@@ -1,14 +1,15 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
-import { ComfyNodeDefImpl, useNodeDefStore } from '@/stores/nodeDefStore'
+import type { ComfyNodeDefImpl } from '@/stores/nodeDefStore'
+import { useNodeDefStore } from '@/stores/nodeDefStore'
 
 /** Helper class that defines how to construct a node from a model. */
 export class ModelNodeProvider {
   /** The node definition to use for this model. */
   public nodeDef: ComfyNodeDefImpl
 
-  /** The node input key for where to inside the model name. */
+  /** The node input key for where to insert the model name. */
   public key: string
 
   constructor(nodeDef: ComfyNodeDefImpl, key: string) {
@@ -22,23 +23,101 @@ export const useModelToNodeStore = defineStore('modelToNode', () => {
   const modelToNodeMap = ref<Record<string, ModelNodeProvider[]>>({})
   const nodeDefStore = useNodeDefStore()
   const haveDefaultsLoaded = ref(false)
+
+  /** Internal computed for reactive caching of registered node types */
+  const registeredNodeTypes = computed<Record<string, string>>(() => {
+    return Object.fromEntries(
+      Object.values(modelToNodeMap.value)
+        .flat()
+        .filter((provider) => !!provider.nodeDef)
+        .map((provider) => [provider.nodeDef.name, provider.key])
+    )
+  })
+
+  /** Internal computed for efficient reverse lookup: nodeType -> category */
+  const nodeTypeToCategory = computed(() => {
+    const lookup: Record<string, string> = {}
+    for (const [category, providers] of Object.entries(modelToNodeMap.value)) {
+      for (const provider of providers) {
+        // Extension nodes may not be installed
+        if (!provider.nodeDef) continue
+        // Only store the first category for each node type (matches current assetService behavior)
+        if (!lookup[provider.nodeDef.name]) {
+          lookup[provider.nodeDef.name] = category
+        }
+      }
+    }
+    return lookup
+  })
+
+  /** Get set of all registered node types for efficient lookup */
+  function getRegisteredNodeTypes(): Record<string, string> {
+    registerDefaults()
+    return registeredNodeTypes.value
+  }
+
+  /**
+   * Get the category for a given node type.
+   * Performs efficient O(1) lookup using cached reverse map.
+   * @param nodeType The node type name to find the category for
+   * @returns The category name, or undefined if not found
+   */
+  function getCategoryForNodeType(nodeType: string): string | undefined {
+    registerDefaults()
+
+    // Handle invalid input gracefully
+    if (!nodeType || typeof nodeType !== 'string') {
+      return undefined
+    }
+
+    return nodeTypeToCategory.value[nodeType]
+  }
+
+  /**
+   * Find providers for modelType with hierarchical fallback.
+   * Tries exact match first, then falls back to top-level segment (e.g., "parent/child" → "parent").
+   * Note: Only falls back one level; "a/b/c" tries "a/b/c" then "a", not "a/b".
+   */
+  function findProvidersWithFallback(
+    modelType: string
+  ): ModelNodeProvider[] | undefined {
+    if (!modelType || typeof modelType !== 'string') {
+      return undefined
+    }
+
+    const exactMatch = modelToNodeMap.value[modelType]
+    if (exactMatch && exactMatch.length > 0) return exactMatch
+
+    const topLevel = modelType.split('/')[0]
+    if (topLevel === modelType) return undefined
+
+    const fallback = modelToNodeMap.value[topLevel]
+
+    if (fallback && fallback.length > 0) return fallback
+
+    return undefined
+  }
+
   /**
    * Get the node provider for the given model type name.
+   * Supports hierarchical lookups: if "parent/child" has no match, falls back to "parent".
    * @param modelType The name of the model type to get the node provider for.
    * @returns The node provider for the given model type name.
    */
   function getNodeProvider(modelType: string): ModelNodeProvider | undefined {
     registerDefaults()
-    return modelToNodeMap.value[modelType]?.[0]
+    return findProvidersWithFallback(modelType)?.[0]
   }
+
   /**
    * Get the list of all valid node providers for the given model type name.
+   * Supports hierarchical lookups: if "parent/child" has no match, falls back to "parent".
    * @param modelType The name of the model type to get the node providers for.
    * @returns The list of all valid node providers for the given model type name.
    */
   function getAllNodeProviders(modelType: string): ModelNodeProvider[] {
     registerDefaults()
-    return modelToNodeMap.value[modelType] ?? []
+    return findProvidersWithFallback(modelType) ?? []
   }
   /**
    * Register a node provider for the given model type name.
@@ -50,6 +129,7 @@ export const useModelToNodeStore = defineStore('modelToNode', () => {
     nodeProvider: ModelNodeProvider
   ) {
     registerDefaults()
+    if (!nodeProvider.nodeDef) return
     if (!modelToNodeMap.value[modelType]) {
       modelToNodeMap.value[modelType] = []
     }
@@ -83,10 +163,41 @@ export const useModelToNodeStore = defineStore('modelToNode', () => {
     quickRegister('loras', 'LoraLoaderModelOnly', 'lora_name')
     quickRegister('vae', 'VAELoader', 'vae_name')
     quickRegister('controlnet', 'ControlNetLoader', 'control_net_name')
+    quickRegister('diffusion_models', 'UNETLoader', 'unet_name')
+    quickRegister('upscale_models', 'UpscaleModelLoader', 'model_name')
+    quickRegister('style_models', 'StyleModelLoader', 'style_model_name')
+    quickRegister('gligen', 'GLIGENLoader', 'gligen_name')
+    quickRegister('clip_vision', 'CLIPVisionLoader', 'clip_name')
+    quickRegister('text_encoders', 'CLIPLoader', 'clip_name')
+    quickRegister('audio_encoders', 'AudioEncoderLoader', 'audio_encoder_name')
+    quickRegister('model_patches', 'ModelPatchLoader', 'name')
+    quickRegister(
+      'animatediff_models',
+      'ADE_LoadAnimateDiffModel',
+      'model_name'
+    )
+    quickRegister(
+      'animatediff_motion_lora',
+      'ADE_AnimateDiffLoRALoader',
+      'name'
+    )
+
+    // Chatterbox TTS nodes: empty key means the node auto-loads models without
+    // a widget selector (createModelNodeFromAsset skips widget assignment)
+    quickRegister('chatterbox/chatterbox', 'FL_ChatterboxTTS', '')
+    quickRegister('chatterbox/chatterbox_turbo', 'FL_ChatterboxTurboTTS', '')
+    quickRegister(
+      'chatterbox/chatterbox_multilingual',
+      'FL_ChatterboxMultilingualTTS',
+      ''
+    )
+    quickRegister('chatterbox/chatterbox_vc', 'FL_ChatterboxVC', '')
   }
 
   return {
     modelToNodeMap,
+    getRegisteredNodeTypes,
+    getCategoryForNodeType,
     getNodeProvider,
     getAllNodeProviders,
     registerNodeProvider,

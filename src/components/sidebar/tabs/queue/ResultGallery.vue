@@ -5,9 +5,9 @@
     :value="allGalleryItems"
     :show-indicators="false"
     change-item-on-indicator-hover
-    show-item-navigators
+    :show-item-navigators="hasMultiple"
     full-screen
-    circular
+    :circular="hasMultiple"
     :show-thumbnails="false"
     :pt="{
       mask: {
@@ -35,17 +35,19 @@
         class="galleria-image"
       />
       <ResultVideo v-else-if="item.isVideo" :result="item" />
+      <ResultAudio v-else-if="item.isAudio" :result="item" />
     </template>
   </Galleria>
 </template>
 
 <script setup lang="ts">
 import Galleria from 'primevue/galleria'
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import ComfyImage from '@/components/common/ComfyImage.vue'
-import { ResultItemImpl } from '@/stores/queueStore'
+import type { ResultItemImpl } from '@/stores/queueStore'
 
+import ResultAudio from './ResultAudio.vue'
 import ResultVideo from './ResultVideo.vue'
 
 const galleryVisible = ref(false)
@@ -58,6 +60,8 @@ const props = defineProps<{
   allGalleryItems: ResultItemImpl[]
   activeIndex: number
 }>()
+
+const hasMultiple = computed(() => props.allGalleryItems.length > 1)
 
 let maskMouseDownTarget: EventTarget | null = null
 
@@ -141,5 +145,13 @@ img.galleria-image {
 .p-galleria-close-button {
   /* Set z-index so the close button doesn't get hidden behind the image when image is large */
   z-index: 1;
+}
+
+/* Mobile/tablet specific fixes */
+@media screen and (max-width: 768px) {
+  .p-galleria-prev-button,
+  .p-galleria-next-button {
+    z-index: 2;
+  }
 }
 </style>

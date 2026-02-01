@@ -3,7 +3,11 @@ import { expect } from '@playwright/test'
 import { comfyPageFixture as test } from '../fixtures/ComfyPage'
 import type { NodeReference } from '../fixtures/utils/litegraphUtils'
 
-test.describe('Primitive Node', () => {
+test.beforeEach(async ({ comfyPage }) => {
+  await comfyPage.setSetting('Comfy.UseNewMenu', 'Disabled')
+})
+
+test.describe('Primitive Node', { tag: ['@screenshot', '@node'] }, () => {
   test('Can load with correct size', async ({ comfyPage }) => {
     await comfyPage.loadWorkflow('primitive/primitive_node')
     await expect(comfyPage.canvas).toHaveScreenshot('primitive_node.png')

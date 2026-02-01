@@ -1,8 +1,11 @@
-import { type StatusWsMessageStatus, TaskItem } from '@/schemas/apiSchema'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { WORKFLOW_ACCEPT_STRING } from '@/platform/workflow/core/types/formats'
+import { type StatusWsMessageStatus } from '@/schemas/apiSchema'
 import { useDialogService } from '@/services/dialogService'
+import { isCloud } from '@/platform/distribution/types'
+import { useTelemetry } from '@/platform/telemetry'
 import { useLitegraphService } from '@/services/litegraphService'
 import { useCommandStore } from '@/stores/commandStore'
-import { useSettingStore } from '@/stores/settingStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 
 import { api } from './api'
@@ -25,10 +28,21 @@ type Props = {
   style?: Partial<CSSStyleDeclaration>
   for?: string
   textContent?: string
-  [key: string]: any
+  [key: string]: unknown
 }
 
 type Children = Element[] | Element | string | string[]
+
+/**
+ * @deprecated Legacy queue item structure from old history API.
+ * Will be removed when ComfyList is migrated to Jobs API.
+ */
+interface LegacyQueueItem {
+  prompt: [unknown, string, unknown, { extra_pnginfo: { workflow: unknown } }]
+  outputs?: Record<string, unknown>
+  meta?: Record<string, { display_node?: string }>
+  remove?: { name: string; cb: () => Promise<void> | void }
+}
 
 type ElementType<K extends string> = K extends keyof HTMLElementTagNameMap
   ? HTMLElementTagNameMap[K]
@@ -227,17 +241,17 @@ function dragElement(dragEl): () => void {
 }
 
 class ComfyList {
-  #type
-  #text
-  #reverse
+  private _type
+  private _text
+  private _reverse
   element: HTMLDivElement
   button?: HTMLButtonElement
 
   // @ts-expect-error fixme ts strict error
   constructor(text, type?, reverse?) {
-    this.#text = text
-    this.#type = type || text.toLowerCase()
-    this.#reverse = reverse || false
+    this._text = text
+    this._type = type || text.toLowerCase()
+    this._reverse = reverse || false
     this.element = $el('div.comfy-list') as HTMLDivElement
     this.element.style.display = 'none'
   }
@@ -247,7 +261,7 @@ class ComfyList {
   }
 
   async load() {
-    const items = await api.getItems(this.#type)
+    const items = await api.getItems(this._type)
     this.element.replaceChildren(
       ...Object.keys(items).flatMap((section) => [
         $el('h4', {
@@ -255,30 +269,29 @@ class ComfyList {
         }),
         $el('div.comfy-list-items', [
           // @ts-expect-error fixme ts strict error
-          ...(this.#reverse ? items[section].reverse() : items[section]).map(
-            (item: TaskItem) => {
+          ...(this._reverse ? items[section].reverse() : items[section]).map(
+            (item: LegacyQueueItem) => {
               // Allow items to specify a custom remove action (e.g. for interrupt current prompt)
-              const removeAction =
-                'remove' in item
-                  ? item.remove
-                  : {
-                      name: 'Delete',
-                      cb: () => api.deleteItem(this.#type, item.prompt[1])
-                    }
+              const removeAction = item.remove ?? {
+                name: 'Delete',
+                cb: () => api.deleteItem(this._type, item.prompt[1])
+              }
               return $el('div', { textContent: item.prompt[0] + ': ' }, [
                 $el('button', {
                   textContent: 'Load',
                   onclick: async () => {
                     await app.loadGraphData(
-                      // @ts-expect-error fixme ts strict error
-                      item.prompt[3].extra_pnginfo.workflow,
+                      item.prompt[3].extra_pnginfo.workflow as Parameters<
+                        typeof app.loadGraphData
+                      >[0],
                       true,
                       false
                     )
-                    if ('outputs' in item) {
+                    if ('outputs' in item && item.outputs) {
                       app.nodeOutputs = {}
                       for (const [key, value] of Object.entries(item.outputs)) {
                         const realKey = item['meta']?.[key]?.display_node ?? key
+                        // @ts-expect-error fixme ts strict error
                         app.nodeOutputs[realKey] = value
                       }
                     }
@@ -298,9 +311,9 @@ class ComfyList {
       ]),
       $el('div.comfy-list-actions', [
         $el('button', {
-          textContent: 'Clear ' + this.#text,
+          textContent: 'Clear ' + this._text,
           onclick: async () => {
-            await api.clearItems(this.#type)
+            await api.clearItems(this._type)
             await this.load()
           }
         }),
@@ -326,7 +339,7 @@ class ComfyList {
   hide() {
     this.element.style.display = 'none'
     // @ts-expect-error fixme ts strict error
-    this.button.textContent = 'View ' + this.#text
+    this.button.textContent = 'View ' + this._text
   }
 
   toggle() {
@@ -386,13 +399,15 @@ export class ComfyUI {
     const fileInput = $el('input', {
       id: 'comfy-file-input',
       type: 'file',
-      accept: '.json,image/png,.latent,.safetensors,image/webp,audio/flac',
+      accept: WORKFLOW_ACCEPT_STRING,
       style: { display: 'none' },
       parent: document.body,
       onchange: async () => {
-        // @ts-expect-error fixme ts strict error
-        await app.handleFile(fileInput.files[0])
-        fileInput.value = ''
+        const file = fileInput.files?.[0]
+        if (file) {
+          await app.handleFile(file, 'file_button')
+          fileInput.value = ''
+        }
       }
     })
 
@@ -469,7 +484,13 @@ export class ComfyUI {
         $el('button.comfy-queue-btn', {
           id: 'queue-button',
           textContent: 'Queue Prompt',
-          onclick: () => app.queuePrompt(0, this.batchCount)
+          onclick: () => {
+            if (isCloud) {
+              useTelemetry()?.trackRunButton({ trigger_source: 'legacy_ui' })
+              useTelemetry()?.trackWorkflowExecution()
+            }
+            app.queuePrompt(0, this.batchCount)
+          }
         }),
         $el('div', {}, [
           $el('label', { innerHTML: 'Extra options' }, [
@@ -571,7 +592,13 @@ export class ComfyUI {
           $el('button', {
             id: 'queue-front-button',
             textContent: 'Queue Front',
-            onclick: () => app.queuePrompt(-1, this.batchCount)
+            onclick: () => {
+              if (isCloud) {
+                useTelemetry()?.trackRunButton({ trigger_source: 'legacy_ui' })
+                useTelemetry()?.trackWorkflowExecution()
+              }
+              app.queuePrompt(-1, this.batchCount)
+            }
           }),
           $el('button', {
             $: (b) => (this.queue.button = b as HTMLButtonElement),
@@ -633,7 +660,6 @@ export class ComfyUI {
               confirm('Clear workflow?')
             ) {
               app.clean()
-              app.graph.clear()
               useLitegraphService().resetView()
               api.dispatchCustomEvent('graphCleared')
             }

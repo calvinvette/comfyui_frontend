@@ -1,4 +1,5 @@
-import axios, { AxiosError, AxiosResponse } from 'axios'
+import type { AxiosError, AxiosResponse } from 'axios'
+import axios from 'axios'
 import { ref } from 'vue'
 
 import type { components, operations } from '@/types/comfyRegistryTypes'
@@ -318,6 +319,96 @@ export const useComfyRegistryService = () => {
     )
   }
 
+  /**
+   * Get the node pack that contains a specific ComfyUI node by its name.
+   * This method queries the registry to find which pack provides the given node.
+   *
+   * When multiple packs contain a node with the same name, the API returns the best match based on:
+   * 1. Preemption match - If the node name matches any in the pack's preempted_comfy_node_names array
+   * 2. Search ranking - Lower search_ranking values are preferred
+   * 3. Total installs - Higher installation counts are preferred as a tiebreaker
+   *
+   * @param nodeName - The name of the ComfyUI node (e.g., 'KSampler', 'CLIPTextEncode')
+   * @param signal - Optional AbortSignal for request cancellation
+   * @returns The node pack containing the specified node, or null if not found or on error
+   *
+   * @example
+   * ```typescript
+   * const pack = await inferPackFromNodeName('KSampler')
+   * if (pack) {
+   *   console.log(`Node found in pack: ${pack.name}`)
+   * }
+   * ```
+   */
+  const inferPackFromNodeName = async (
+    nodeName: operations['getNodeByComfyNodeName']['parameters']['path']['comfyNodeName'],
+    signal?: AbortSignal
+  ) => {
+    const endpoint = `/comfy-nodes/${nodeName}/node`
+    const errorContext = 'Failed to infer pack from comfy node name'
+    const routeSpecificErrors = {
+      404: `Comfy node not found: The node with name ${nodeName} does not exist in the registry`
+    }
+
+    return executeApiRequest(
+      () =>
+        registryApiClient.get<components['schemas']['Node']>(endpoint, {
+          signal
+        }),
+      errorContext,
+      routeSpecificErrors
+    )
+  }
+
+  /**
+   * Get multiple pack versions in a single bulk request.
+   * This is more efficient than making individual requests for each pack version.
+   *
+   * @param nodeVersions - Array of node ID and version pairs to retrieve
+   * @param signal - Optional AbortSignal for request cancellation
+   * @returns Bulk response containing the requested node versions or null on error
+   *
+   * @example
+   * ```typescript
+   * const versions = await getBulkNodeVersions([
+   *   { node_id: 'ComfyUI-Manager', version: '1.0.0' },
+   *   { node_id: 'ComfyUI-Impact-Pack', version: '2.0.0' }
+   * ])
+   * if (versions) {
+   *   versions.node_versions.forEach(result => {
+   *     if (result.status === 'success' && result.node_version) {
+   *       console.log(`Retrieved ${result.identifier.node_id}@${result.identifier.version}`)
+   *     }
+   *   })
+   * }
+   * ```
+   */
+  const getBulkNodeVersions = async (
+    nodeVersions: components['schemas']['NodeVersionIdentifier'][],
+    signal?: AbortSignal
+  ) => {
+    const endpoint = '/bulk/nodes/versions'
+    const errorContext = 'Failed to get bulk node versions'
+    const routeSpecificErrors = {
+      400: 'Bad request: Invalid node version identifiers provided'
+    }
+
+    const requestBody: components['schemas']['BulkNodeVersionsRequest'] = {
+      node_versions: nodeVersions
+    }
+
+    return executeApiRequest(
+      () =>
+        registryApiClient.post<
+          components['schemas']['BulkNodeVersionsResponse']
+        >(endpoint, requestBody, {
+          signal
+        }),
+      errorContext,
+      routeSpecificErrors
+    )
+  }
+
   return {
     isLoading,
     error,
@@ -330,6 +421,8 @@ export const useComfyRegistryService = () => {
     getPublisherById,
     listPacksForPublisher,
     getNodeDefs,
-    postPackReview
+    postPackReview,
+    inferPackFromNodeName,
+    getBulkNodeVersions
   }
 }

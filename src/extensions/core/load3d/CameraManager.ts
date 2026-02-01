@@ -2,11 +2,10 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 
 import {
-  CameraManagerInterface,
-  CameraState,
-  CameraType,
-  EventManagerInterface,
-  NodeStorageInterface
+  type CameraManagerInterface,
+  type CameraState,
+  type CameraType,
+  type EventManagerInterface
 } from './interfaces'
 
 export class CameraManager implements CameraManagerInterface {
@@ -14,10 +13,7 @@ export class CameraManager implements CameraManagerInterface {
   orthographicCamera: THREE.OrthographicCamera
   activeCamera: THREE.Camera
 
-  // @ts-expect-error unused variable
-  private renderer: THREE.WebGLRenderer
   private eventManager: EventManagerInterface
-  private nodeStorage: NodeStorageInterface
 
   private controls: OrbitControls | null = null
 
@@ -44,13 +40,10 @@ export class CameraManager implements CameraManagerInterface {
   }
 
   constructor(
-    renderer: THREE.WebGLRenderer,
-    eventManager: EventManagerInterface,
-    nodeStorage: NodeStorageInterface
+    _renderer: THREE.WebGLRenderer,
+    eventManager: EventManagerInterface
   ) {
-    this.renderer = renderer
     this.eventManager = eventManager
-    this.nodeStorage = nodeStorage
 
     this.perspectiveCamera = new THREE.PerspectiveCamera(
       this.DEFAULT_PERSPECTIVE_CAMERA.fov,
@@ -82,7 +75,7 @@ export class CameraManager implements CameraManagerInterface {
 
     if (this.controls) {
       this.controls.addEventListener('end', () => {
-        this.nodeStorage.storeNodeProperty('Camera Info', this.getCameraState())
+        this.eventManager.emitEvent('cameraChanged', this.getCameraState())
       })
     }
   }
@@ -179,12 +172,16 @@ export class CameraManager implements CameraManagerInterface {
   }
 
   handleResize(width: number, height: number): void {
+    const aspect = width / height
+    this.updateAspectRatio(aspect)
+  }
+
+  updateAspectRatio(aspect: number): void {
     if (this.activeCamera === this.perspectiveCamera) {
-      this.perspectiveCamera.aspect = width / height
+      this.perspectiveCamera.aspect = aspect
       this.perspectiveCamera.updateProjectionMatrix()
     } else {
       const frustumSize = 10
-      const aspect = width / height
       this.orthographicCamera.left = (-frustumSize * aspect) / 2
       this.orthographicCamera.right = (frustumSize * aspect) / 2
       this.orthographicCamera.top = frustumSize / 2

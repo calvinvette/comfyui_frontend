@@ -1,22 +1,28 @@
-import type { LGraphNode } from '@comfyorg/litegraph'
-import type { IWidget } from '@comfyorg/litegraph'
+import { t } from '@/i18n'
+import { type LGraphNode, isComboWidget } from '@/lib/litegraph/src/litegraph'
 import type {
+  IBaseWidget,
   IComboWidget,
   IStringWidget
-} from '@comfyorg/litegraph/dist/types/widgets'
-
-import { useBooleanWidget } from '@/composables/widgets/useBooleanWidget'
-import { useComboWidget } from '@/composables/widgets/useComboWidget'
-import { useFloatWidget } from '@/composables/widgets/useFloatWidget'
-import { useImageUploadWidget } from '@/composables/widgets/useImageUploadWidget'
-import { useIntWidget } from '@/composables/widgets/useIntWidget'
-import { useMarkdownWidget } from '@/composables/widgets/useMarkdownWidget'
-import { useStringWidget } from '@/composables/widgets/useStringWidget'
-import { t } from '@/i18n'
+} from '@/lib/litegraph/src/types/widgets'
+import { useSettingStore } from '@/platform/settings/settingStore'
+import { dynamicWidgets } from '@/core/graph/widgets/dynamicWidgets'
+import { useBooleanWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useBooleanWidget'
+import { useBoundingBoxWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useBoundingBoxWidget'
+import { useChartWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useChartWidget'
+import { useColorWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useColorWidget'
+import { useComboWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useComboWidget'
+import { useFloatWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useFloatWidget'
+import { useGalleriaWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useGalleriaWidget'
+import { useImageCompareWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useImageCompareWidget'
+import { useImageUploadWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useImageUploadWidget'
+import { useIntWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useIntWidget'
+import { useMarkdownWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useMarkdownWidget'
+import { useStringWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useStringWidget'
+import { useTextareaWidget } from '@/renderer/extensions/vueNodes/widgets/composables/useTextareaWidget'
 import { transformInputSpecV1ToV2 } from '@/schemas/nodeDef/migration'
 import type { InputSpec as InputSpecV2 } from '@/schemas/nodeDef/nodeDefSchemaV2'
 import type { InputSpec } from '@/schemas/nodeDefSchema'
-import { useSettingStore } from '@/stores/settingStore'
 
 import type { ComfyApp } from './app'
 import './domWidget'
@@ -25,7 +31,7 @@ import './errorNodeWidgets'
 export type ComfyWidgetConstructorV2 = (
   node: LGraphNode,
   inputSpec: InputSpecV2
-) => IWidget
+) => IBaseWidget
 
 export type ComfyWidgetConstructor = (
   node: LGraphNode,
@@ -33,7 +39,7 @@ export type ComfyWidgetConstructor = (
   inputData: InputSpec,
   app: ComfyApp,
   widgetName?: string
-) => { widget: IWidget; minWidth?: number; minHeight?: number }
+) => { widget: IBaseWidget; minWidth?: number; minHeight?: number }
 
 /**
  * Transforms a V2 widget constructor to a V1 widget constructor.
@@ -60,7 +66,7 @@ function controlValueRunBefore() {
   return useSettingStore().get('Comfy.WidgetControlMode') === 'before'
 }
 
-export function updateControlWidgetLabel(widget: IWidget) {
+export function updateControlWidgetLabel(widget: IBaseWidget) {
   if (controlValueRunBefore()) {
     widget.label = t('g.control_before_generate')
   } else {
@@ -73,12 +79,12 @@ const HAS_EXECUTED = Symbol()
 
 export function addValueControlWidget(
   node: LGraphNode,
-  targetWidget: IWidget,
+  targetWidget: IBaseWidget,
   defaultValue?: string,
   _values?: unknown,
   widgetName?: string,
   inputData?: InputSpec
-): IWidget {
+): IComboWidget {
   let name = inputData?.[1]?.control_after_generate
   if (typeof name !== 'string') {
     name = widgetName
@@ -98,11 +104,11 @@ export function addValueControlWidget(
 
 export function addValueControlWidgets(
   node: LGraphNode,
-  targetWidget: IWidget,
+  targetWidget: IBaseWidget,
   defaultValue?: string,
   options?: Record<string, any>,
   inputData?: InputSpec
-): IWidget[] {
+): [IComboWidget, ...IStringWidget[]] {
   if (!defaultValue) defaultValue = 'randomize'
   if (!options) options = {}
 
@@ -118,7 +124,6 @@ export function addValueControlWidgets(
     return name
   }
 
-  const widgets: IWidget[] = []
   const valueControl = node.addWidget(
     'combo',
     getName('control_after_generate', 'controlAfterGenerateName'),
@@ -126,20 +131,24 @@ export function addValueControlWidgets(
     function () {},
     {
       values: ['fixed', 'increment', 'decrement', 'randomize'],
-      serialize: false // Don't include this in prompt.
+      serialize: false, // Don't include this in prompt.
+      canvasOnly: true
     }
   ) as IComboWidget
 
   valueControl.tooltip =
     'Allows the linked widget to be changed automatically, for example randomizing the noise seed.'
-  // @ts-ignore index with symbol
   valueControl[IS_CONTROL_WIDGET] = true
   updateControlWidgetLabel(valueControl)
-  widgets.push(valueControl)
+  Object.defineProperty(valueControl, 'disabled', {
+    get: () => targetWidget.computedDisabled
+  })
+  const widgets: [IComboWidget, ...IStringWidget[]] = [valueControl]
 
-  const isCombo = targetWidget.type === 'combo'
+  const isCombo = isComboWidget(targetWidget)
   let comboFilter: IStringWidget
   if (isCombo && valueControl.options.values) {
+    // @ts-expect-error Combo widget values may be a dictionary or legacy function type
     valueControl.options.values.push('increment-wrap')
   }
   if (isCombo && options.addFilterList !== false) {
@@ -155,6 +164,9 @@ export function addValueControlWidgets(
     updateControlWidgetLabel(comboFilter)
     comboFilter.tooltip =
       "Allows for filtering the list of values when changing the value via the control generate mode. Allows for RegEx matches in the format /abc/ to only filter to values containing 'abc'."
+    Object.defineProperty(comboFilter, 'disabled', {
+      get: () => targetWidget.computedDisabled
+    })
 
     widgets.push(comboFilter)
   }
@@ -183,6 +195,7 @@ export function addValueControlWidgets(
           const lower = filter.toLocaleLowerCase()
           check = (item: string) => item.toLocaleLowerCase().includes(lower)
         }
+        // @ts-expect-error Combo widget values may be a dictionary or legacy function type
         values = values.filter((item: string) => check(item))
         if (!values.length && targetWidget.options.values?.length) {
           console.warn(
@@ -209,14 +222,17 @@ export function addValueControlWidgets(
           current_index -= 1
           break
         case 'randomize':
+          // @ts-expect-error Combo widget values may be a dictionary or legacy function type
           current_index = Math.floor(Math.random() * current_length)
           break
         default:
           break
       }
       current_index = Math.max(0, current_index)
+      // @ts-expect-error Combo widget values may be a dictionary or legacy function type
       current_index = Math.min(current_length - 1, current_index)
       if (current_index >= 0) {
+        // @ts-expect-error Combo widget values may be a dictionary or legacy function type
         let value = values[current_index]
         targetWidget.value = value
         targetWidget.callback?.(value)
@@ -260,12 +276,10 @@ export function addValueControlWidgets(
   valueControl.beforeQueued = () => {
     if (controlValueRunBefore()) {
       // Don't run on first execution
-      // @ts-ignore index with symbol
       if (valueControl[HAS_EXECUTED]) {
         applyWidgetControl()
       }
     }
-    // @ts-ignore index with symbol
     valueControl[HAS_EXECUTED] = true
   }
 
@@ -278,12 +292,25 @@ export function addValueControlWidgets(
   return widgets
 }
 
-export const ComfyWidgets: Record<string, ComfyWidgetConstructor> = {
+export const ComfyWidgets = {
   INT: transformWidgetConstructorV2ToV1(useIntWidget()),
   FLOAT: transformWidgetConstructorV2ToV1(useFloatWidget()),
   BOOLEAN: transformWidgetConstructorV2ToV1(useBooleanWidget()),
   STRING: transformWidgetConstructorV2ToV1(useStringWidget()),
   MARKDOWN: transformWidgetConstructorV2ToV1(useMarkdownWidget()),
   COMBO: transformWidgetConstructorV2ToV1(useComboWidget()),
-  IMAGEUPLOAD: useImageUploadWidget()
+  IMAGEUPLOAD: useImageUploadWidget(),
+  COLOR: transformWidgetConstructorV2ToV1(useColorWidget()),
+  IMAGECOMPARE: transformWidgetConstructorV2ToV1(useImageCompareWidget()),
+  BOUNDINGBOX: transformWidgetConstructorV2ToV1(useBoundingBoxWidget()),
+  CHART: transformWidgetConstructorV2ToV1(useChartWidget()),
+  GALLERIA: transformWidgetConstructorV2ToV1(useGalleriaWidget()),
+  TEXTAREA: transformWidgetConstructorV2ToV1(useTextareaWidget()),
+  ...dynamicWidgets
+} as const
+
+export function isValidWidgetType(
+  key: unknown
+): key is keyof typeof ComfyWidgets {
+  return ComfyWidgets[key as keyof typeof ComfyWidgets] !== undefined
 }

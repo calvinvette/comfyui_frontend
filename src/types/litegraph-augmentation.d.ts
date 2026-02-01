@@ -1,14 +1,19 @@
-import '@comfyorg/litegraph'
-import type { LLink, Size } from '@comfyorg/litegraph'
-
+import '@/lib/litegraph/src/litegraph'
+import type {
+  ExecutableLGraphNode,
+  ExecutionId,
+  LLink,
+  Size
+} from '@/lib/litegraph/src/litegraph'
+import type { IBaseWidget } from '@/lib/litegraph/src/types/widgets'
+import type { NodeId } from '@/platform/workflow/validation/schemas/workflowSchema'
+import type { NodeExecutionOutput } from '@/schemas/apiSchema'
 import type { ComfyNodeDef as ComfyNodeDefV2 } from '@/schemas/nodeDef/nodeDefSchemaV2'
 import type { ComfyNodeDef as ComfyNodeDefV1 } from '@/schemas/nodeDefSchema'
 import type { DOMWidget, DOMWidgetOptions } from '@/scripts/domWidget'
 
-import type { NodeId } from '../schemas/comfyWorkflowSchema'
-
 /** ComfyUI extensions of litegraph */
-declare module '@comfyorg/litegraph/dist/types/widgets' {
+declare module '@/lib/litegraph/src/types/widgets' {
   interface IWidgetOptions {
     /** Currently used by DOM widgets only.  Declaring here reduces complexity. */
     onHide?: (widget: DOMWidget) => void
@@ -29,21 +34,24 @@ declare module '@comfyorg/litegraph/dist/types/widgets' {
      * The minimum size of the node if the widget is present.
      */
     minNodeSize?: Size
+
+    /** If the widget is advanced, this will be set to true. */
+    advanced?: boolean
+
+    /** If the widget is hidden, this will be set to true. */
+    hidden?: boolean
   }
 
   interface IBaseWidget {
-    onRemove?: () => void
-    beforeQueued?: () => unknown
-    afterQueued?: () => unknown
-    serializeValue?: (
-      node: LGraphNode,
-      index: number
-    ) => Promise<unknown> | unknown
+    onRemove?(): void
+    beforeQueued?(): unknown
+    afterQueued?(): unknown
+    serializeValue?(node: LGraphNode, index: number): Promise<unknown> | unknown
 
     /**
      * Refreshes the widget's value or options from its remote source.
      */
-    refresh?: () => unknown
+    refresh?(): unknown
 
     /**
      * If the widget supports dynamic prompts, this will be set to true.
@@ -54,17 +62,30 @@ declare module '@comfyorg/litegraph/dist/types/widgets' {
 }
 
 /**
+ * ComfyUI extensions of litegraph interfaces
+ */
+declare module '@/lib/litegraph/src/interfaces' {
+  interface IWidgetLocator {
+    [key: symbol]: unknown
+  }
+}
+
+/**
  *  ComfyUI extensions of litegraph
  */
-declare module '@comfyorg/litegraph' {
+declare module '@/lib/litegraph/src/litegraph' {
   interface LGraphNodeConstructor<T extends LGraphNode = LGraphNode> {
     type?: string
     comfyClass: string
     title: string
-    nodeData?: ComfyNodeDefV1 & ComfyNodeDefV2
+    nodeData?: ComfyNodeDefV1 & ComfyNodeDefV2 & { [key: symbol]: unknown }
     category?: string
     new (): T
   }
+
+  // Add interface augmentations into the class itself
+
+  interface BaseWidget extends IBaseWidget {}
 
   interface LGraphNode {
     constructor: LGraphNodeConstructor
@@ -74,12 +95,22 @@ declare module '@comfyorg/litegraph' {
      */
     onAfterGraphConfigured?(): void
     onGraphConfigured?(): void
-    onExecuted?(output: any): void
+    /**
+     * Callback fired when node execution completes.
+     * Output contains known media properties (images, audio, video) plus
+     * arbitrary node-specific outputs (text, ui, custom properties).
+     */
+    onExecuted?(output: NodeExecutionOutput): void
     onNodeCreated?(this: LGraphNode): void
     /** @deprecated groupNode */
     setInnerNodes?(nodes: LGraphNode[]): void
     /** Originally a group node API. */
-    getInnerNodes?(): LGraphNode[]
+    getInnerNodes?(
+      nodesByExecutionId: Map<ExecutionId, ExecutableLGraphNode>,
+      subgraphNodePath?: readonly NodeId[],
+      nodes?: ExecutableLGraphNode[],
+      subgraphs?: Set<LGraphNode>
+    ): ExecutableLGraphNode[]
     /** @deprecated groupNode */
     convertToNodes?(): LGraphNode[]
     recreate?(): Promise<LGraphNode>
@@ -173,7 +204,7 @@ declare module '@comfyorg/litegraph' {
 /**
  * Extended types for litegraph, to be merged upstream once it has stabilized.
  */
-declare module '@comfyorg/litegraph' {
+declare module '@/lib/litegraph/src/litegraph' {
   /**
    * widgets_values is set to LGraphNode by `LGraphNode.configure`, but it is not
    * used by litegraph internally. We should remove the dependency on it later.

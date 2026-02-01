@@ -1,12 +1,21 @@
-import type { ColorOption, LGraph } from '@comfyorg/litegraph'
-import { LGraphGroup, LGraphNode, isColorable } from '@comfyorg/litegraph'
-import type { ISerialisedGraph } from '@comfyorg/litegraph/dist/types/serialisation'
-import type {
-  IComboWidget,
-  IWidget
-} from '@comfyorg/litegraph/dist/types/widgets'
-import _ from 'lodash'
+import _ from 'es-toolkit/compat'
 
+import type { ColorOption, LGraph } from '@/lib/litegraph/src/litegraph'
+import {
+  LGraphGroup,
+  LGraphNode,
+  Reroute,
+  isColorable
+} from '@/lib/litegraph/src/litegraph'
+import type {
+  ExportedSubgraph,
+  ISerialisableNodeInput,
+  ISerialisedGraph
+} from '@/lib/litegraph/src/types/serialisation'
+import type {
+  IBaseWidget,
+  IComboWidget
+} from '@/lib/litegraph/src/types/widgets'
 import type { InputSpec } from '@/schemas/nodeDef/nodeDefSchemaV2'
 
 type ImageNode = LGraphNode & { imgs: HTMLImageElement[] | undefined }
@@ -35,7 +44,9 @@ export function isAudioNode(node: LGraphNode | undefined): boolean {
 export function addToComboValues(widget: IComboWidget, value: string) {
   if (!widget.options) widget.options = { values: [] }
   if (!widget.options.values) widget.options.values = []
+  // @ts-expect-error Combo widget values may be a dictionary or legacy function type
   if (!widget.options.values.includes(value)) {
+    // @ts-expect-error Combo widget values may be a dictionary or legacy function type
     widget.options.values.push(value)
   }
 }
@@ -46,6 +57,10 @@ export const isLGraphNode = (item: unknown): item is LGraphNode => {
 
 export const isLGraphGroup = (item: unknown): item is LGraphGroup => {
   return item instanceof LGraphGroup
+}
+
+export const isReroute = (item: unknown): item is Reroute => {
+  return item instanceof Reroute
 }
 
 /**
@@ -90,7 +105,7 @@ export function executeWidgetsCallback(
  */
 export function migrateWidgetsValues<TWidgetValue>(
   inputDefs: Record<string, InputSpec>,
-  widgets: IWidget[],
+  widgets: IBaseWidget[],
   widgetsValues: TWidgetValue[]
 ): TWidgetValue[] {
   const widgetNames = new Set(widgets.map((w) => w.name))
@@ -143,7 +158,10 @@ export function migrateWidgetsValues<TWidgetValue>(
  * @param graph - The graph to fix links for.
  */
 export function fixLinkInputSlots(graph: LGraph) {
+  // Note: We can't use forEachNode here because we need access to the graph's
+  // links map at each level. Links are stored in their respective graph/subgraph.
   for (const node of graph.nodes) {
+    // Fix links for the current node
     for (const [inputIndex, input] of node.inputs.entries()) {
       const linkId = input.link
       if (!linkId) continue
@@ -153,6 +171,11 @@ export function fixLinkInputSlots(graph: LGraph) {
 
       link.target_slot = inputIndex
     }
+
+    // Recursively fix links in subgraphs
+    if (node.isSubgraphNode?.() && node.subgraph) {
+      fixLinkInputSlots(node.subgraph)
+    }
   }
 }
 
@@ -161,12 +184,11 @@ export function fixLinkInputSlots(graph: LGraph) {
  * This should match the serialization format of legacy widget conversion.
  *
  * @param graph - The graph to compress widget input slots for.
+ * @throws If an infinite loop is detected.
  */
 export function compressWidgetInputSlots(graph: ISerialisedGraph) {
   for (const node of graph.nodes) {
-    node.inputs = node.inputs?.filter(
-      (input) => !(input.widget && input.link === null)
-    )
+    node.inputs = node.inputs?.filter(matchesLegacyApi)
 
     for (const [inputIndex, input] of node.inputs?.entries() ?? []) {
       if (input.link) {
@@ -177,4 +199,52 @@ export function compressWidgetInputSlots(graph: ISerialisedGraph) {
       }
     }
   }
+
+  compressSubgraphWidgetInputSlots(graph.definitions?.subgraphs)
+}
+
+function matchesLegacyApi(input: ISerialisableNodeInput) {
+  return !(input.widget && input.link === null && !input.label)
+}
+
+/**
+ * Duplication to handle the legacy link arrays in the root workflow.
+ * @see compressWidgetInputSlots
+ * @param subgraph The subgraph to compress widget input slots for.
+ */
+function compressSubgraphWidgetInputSlots(
+  subgraphs: ExportedSubgraph[] | undefined,
+  visited = new WeakSet<ExportedSubgraph>()
+) {
+  if (!subgraphs) return
+
+  for (const subgraph of subgraphs) {
+    if (visited.has(subgraph)) throw new Error('Infinite loop detected')
+    visited.add(subgraph)
+
+    if (subgraph.nodes) {
+      for (const node of subgraph.nodes) {
+        node.inputs = node.inputs?.filter(matchesLegacyApi)
+
+        if (!subgraph.links) continue
+
+        for (const [inputIndex, input] of node.inputs?.entries() ?? []) {
+          if (input.link) {
+            const link = subgraph.links.find((link) => link.id === input.link)
+            if (link) link.target_slot = inputIndex
+          }
+        }
+      }
+    }
+
+    compressSubgraphWidgetInputSlots(subgraph.definitions?.subgraphs, visited)
+  }
+}
+
+export function isLoad3dNode(node: LGraphNode) {
+  return (
+    node &&
+    node.type &&
+    (node.type === 'Load3D' || node.type === 'Load3DAnimation')
+  )
 }

@@ -1,6 +1,6 @@
 import {
-  ComfyNodeDef,
-  InputSpec,
+  type ComfyNodeDef,
+  type InputSpec,
   isComboInputSpecV1
 } from '@/schemas/nodeDefSchema'
 
@@ -14,7 +14,8 @@ const isMediaUploadComboInput = (inputSpec: InputSpec) => {
 
   const isUploadInput =
     inputOptions['image_upload'] === true ||
-    inputOptions['video_upload'] === true
+    inputOptions['video_upload'] === true ||
+    inputOptions['animated_image_upload'] === true
 
   return (
     isUploadInput && (isComboInputSpecV1(inputSpec) || inputName === 'COMBO')

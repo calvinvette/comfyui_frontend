@@ -1,5 +1,6 @@
-import { LiteGraph } from '@comfyorg/litegraph'
 import { z } from 'zod'
+
+import { LiteGraph } from '@/lib/litegraph/src/litegraph'
 
 const nodeSlotSchema = z.object({
   CLIP: z.string(),
@@ -48,6 +49,7 @@ const litegraphBaseSchema = z.object({
   WIDGET_OUTLINE_COLOR: z.string(),
   WIDGET_TEXT_COLOR: z.string(),
   WIDGET_SECONDARY_TEXT_COLOR: z.string(),
+  WIDGET_DISABLED_TEXT_COLOR: z.string(),
   LINK_COLOR: z.string(),
   EVENT_LINK_COLOR: z.string(),
   CONNECTING_LINK_COLOR: z.string(),
@@ -55,7 +57,7 @@ const litegraphBaseSchema = z.object({
   BADGE_BG_COLOR: z.string()
 })
 
-const comfyBaseSchema = z.object({
+export const comfyBaseSchema = z.object({
   ['fg-color']: z.string(),
   ['bg-color']: z.string(),
   ['bg-img']: z.string().optional(),
@@ -73,7 +75,15 @@ const comfyBaseSchema = z.object({
   ['content-fg']: z.string(),
   ['content-hover-bg']: z.string(),
   ['content-hover-fg']: z.string(),
-  ['bar-shadow']: z.string()
+  ['bar-shadow']: z.string(),
+  ['contrast-mix-color']: z.string().optional(),
+  ['interface-stroke']: z.string().optional(),
+  ['interface-panel-surface']: z.string().optional(),
+  ['interface-panel-box-shadow']: z.string().optional(),
+  ['interface-panel-drop-shadow']: z.string().optional(),
+  ['interface-panel-hover-surface']: z.string().optional(),
+  ['interface-panel-selected-surface']: z.string().optional(),
+  ['interface-button-hover-surface']: z.string().optional()
 })
 
 const colorsSchema = z.object({
@@ -98,7 +108,7 @@ export const paletteSchema = z
   })
   .passthrough()
 
-export const completedPaletteSchema = z
+const completedPaletteSchema = z
   .object({
     id: z.string(),
     name: z.string(),

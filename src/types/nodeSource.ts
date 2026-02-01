@@ -1,6 +1,7 @@
 export enum NodeSourceType {
   Core = 'core',
   CustomNodes = 'custom_nodes',
+  Blueprint = 'blueprint',
   Unknown = 'unknown'
 }
 
@@ -29,12 +30,19 @@ export const getNodeSource = (python_module?: string): NodeSource => {
     return UNKNOWN_NODE_SOURCE
   }
   const modules = python_module.split('.')
-  if (['nodes', 'comfy_extras'].includes(modules[0])) {
+  if (['nodes', 'comfy_extras', 'comfy_api_nodes'].includes(modules[0])) {
     return {
       type: NodeSourceType.Core,
       className: 'comfy-core',
       displayText: 'Comfy Core',
       badgeText: '🦊'
+    }
+  } else if (modules[0] === 'blueprint') {
+    return {
+      type: NodeSourceType.Blueprint,
+      className: 'blueprint',
+      displayText: 'Blueprint',
+      badgeText: 'bp'
     }
   } else if (modules[0] === 'custom_nodes') {
     const moduleName = modules[1]

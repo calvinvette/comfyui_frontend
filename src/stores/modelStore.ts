@@ -1,17 +1,25 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
+import type { ModelFile } from '@/platform/assets/schemas/assetSchema'
+import { assetService } from '@/platform/assets/services/assetService'
+import { useSettingStore } from '@/platform/settings/settingStore'
 import { api } from '@/scripts/api'
 
 /** (Internal helper) finds a value in a metadata object from any of a list of keys. */
-function _findInMetadata(metadata: any, ...keys: string[]): string | null {
+function _findInMetadata(
+  metadata: Record<string, string | null>,
+  ...keys: string[]
+): string | null {
   for (const key of keys) {
     if (key in metadata) {
-      return metadata[key]
+      const value = metadata[key]
+      return value || null
     }
     for (const k in metadata) {
       if (k.endsWith(key)) {
-        return metadata[k]
+        const value = metadata[k]
+        return value || null
       }
     }
   }
@@ -153,7 +161,10 @@ export class ModelFolder {
   models: Record<string, ComfyModelDef> = {}
   state: ResourceState = ResourceState.Uninitialized
 
-  constructor(public directory: string) {}
+  constructor(
+    public directory: string,
+    private getModelsFunc: (folder: string) => Promise<ModelFile[]>
+  ) {}
 
   get key(): string {
     return this.directory + '/'
@@ -167,7 +178,7 @@ export class ModelFolder {
       return this
     }
     this.state = ResourceState.Loading
-    const models = await api.getModels(this.directory)
+    const models = await this.getModelsFunc(this.directory)
     for (const model of models) {
       this.models[`${model.pathIndex}/${model.name}`] = new ComfyModelDef(
         model.name,
@@ -182,6 +193,7 @@ export class ModelFolder {
 
 /** Model store handler, wraps individual per-folder model stores */
 export const useModelStore = defineStore('models', () => {
+  const settingStore = useSettingStore()
   const modelFolderNames = ref<string[]>([])
   const modelFolderByName = ref<Record<string, ModelFolder>>({})
   const modelFolders = computed<ModelFolder[]>(() =>
@@ -197,11 +209,22 @@ export const useModelStore = defineStore('models', () => {
    * Loads the model folders from the server
    */
   async function loadModelFolders() {
-    const resData = await api.getModelFolders()
+    const useAssetAPI: boolean = settingStore.get('Comfy.Assets.UseAssetAPI')
+
+    const resData = useAssetAPI
+      ? await assetService.getAssetModelFolders()
+      : await api.getModelFolders()
     modelFolderNames.value = resData.map((folder) => folder.name)
     modelFolderByName.value = {}
     for (const folderName of modelFolderNames.value) {
-      modelFolderByName.value[folderName] = new ModelFolder(folderName)
+      const getModelsFunc = useAssetAPI
+        ? (folder: string) => assetService.getAssetModels(folder)
+        : (folder: string) => api.getModels(folder)
+
+      modelFolderByName.value[folderName] = new ModelFolder(
+        folderName,
+        getModelsFunc
+      )
     }
   }
 

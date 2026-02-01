@@ -1,17 +1,31 @@
-import type { LGraphNode } from '@comfyorg/litegraph'
-
 import { useNodeDragAndDrop } from '@/composables/node/useNodeDragAndDrop'
 import { useNodeFileInput } from '@/composables/node/useNodeFileInput'
 import { useNodePaste } from '@/composables/node/useNodePaste'
+import type { LGraphNode } from '@/lib/litegraph/src/litegraph'
+import { useToastStore } from '@/platform/updates/common/toastStore'
+import type { ResultItemType } from '@/schemas/apiSchema'
 import { api } from '@/scripts/api'
-import { useToastStore } from '@/stores/toastStore'
+import { useAssetsStore } from '@/stores/assetsStore'
 
 const PASTED_IMAGE_EXPIRY_MS = 2000
 
-const uploadFile = async (file: File, isPasted: boolean) => {
+interface ImageUploadFormFields {
+  /**
+   * The folder to upload the file to.
+   * @example 'input', 'output', 'temp'
+   */
+  type: ResultItemType
+}
+
+const uploadFile = async (
+  file: File,
+  isPasted: boolean,
+  formFields: Partial<ImageUploadFormFields> = {}
+) => {
   const body = new FormData()
   body.append('image', file)
   if (isPasted) body.append('subfolder', 'pasted')
+  if (formFields.type) body.append('type', formFields.type)
 
   const resp = await api.fetchApi('/upload/image', {
     method: 'POST',
@@ -24,6 +38,13 @@ const uploadFile = async (file: File, isPasted: boolean) => {
   }
 
   const data = await resp.json()
+
+  // Update AssetsStore input assets when files are uploaded to input folder
+  if (formFields.type === 'input' || (!formFields.type && !isPasted)) {
+    const assetsStore = useAssetsStore()
+    await assetsStore.updateInputs()
+  }
+
   return data.subfolder ? `${data.subfolder}/${data.name}` : data.name
 }
 
@@ -36,6 +57,11 @@ interface ImageUploadOptions {
    * @example 'image/png,image/jpeg,image/webp,video/webm,video/mp4'
    */
   accept?: string
+  /**
+   * The folder to upload the file to.
+   * @example 'input', 'output', 'temp'
+   */
+  folder?: ResultItemType
 }
 
 /**
@@ -53,7 +79,9 @@ export const useNodeImageUpload = (
 
   const handleUpload = async (file: File) => {
     try {
-      const path = await uploadFile(file, isPastedFile(file))
+      const path = await uploadFile(file, isPastedFile(file), {
+        type: options.folder
+      })
       if (!path) return
       return path
     } catch (error) {

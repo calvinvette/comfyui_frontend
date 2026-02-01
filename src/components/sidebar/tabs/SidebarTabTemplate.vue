@@ -1,18 +1,25 @@
 <template>
   <div
-    class="comfy-vue-side-bar-container flex flex-col h-full group/sidebar-tab"
-    :class="props.class"
+    :class="
+      cn(
+        'comfy-vue-side-bar-container group/sidebar-tab flex h-full flex-col',
+        props.class
+      )
+    "
   >
-    <div class="comfy-vue-side-bar-header">
-      <Toolbar class="border-x-0 border-t-0 rounded-none px-2 py-1 min-h-8">
+    <div class="comfy-vue-side-bar-header flex flex-col gap-2">
+      <Toolbar
+        class="min-h-16 bg-transparent rounded-none border-x-0 border-t-0 px-2 2xl:px-4"
+      >
         <template #start>
-          <span class="text-xs 2xl:text-sm truncate" :title="props.title">
-            {{ props.title.toUpperCase() }}
+          <span class="truncate font-bold" :title="props.title">
+            {{ props.title }}
           </span>
+          <slot name="alt-title" />
         </template>
         <template #end>
           <div
-            class="flex flex-row motion-safe:w-0 motion-safe:opacity-0 motion-safe:group-hover/sidebar-tab:w-auto motion-safe:group-hover/sidebar-tab:opacity-100 motion-safe:group-focus-within/sidebar-tab:w-auto motion-safe:group-focus-within/sidebar-tab:opacity-100 touch:w-auto touch:opacity-100 transition-all duration-200"
+            class="touch:w-auto touch:opacity-100 flex flex-row overflow-hidden transition-all duration-200 motion-safe:w-0 motion-safe:opacity-0 motion-safe:group-focus-within/sidebar-tab:w-auto motion-safe:group-focus-within/sidebar-tab:opacity-100 motion-safe:group-hover/sidebar-tab:w-auto motion-safe:group-hover/sidebar-tab:opacity-100"
           >
             <slot name="tool-buttons" />
           </div>
@@ -20,16 +27,19 @@
       </Toolbar>
       <slot name="header" />
     </div>
-    <!-- h-0 to force scrollpanel to flex-grow -->
-    <ScrollPanel class="comfy-vue-side-bar-body flex-grow h-0">
+    <!-- h-0 to force scrollpanel to grow -->
+    <ScrollPanel class="comfy-vue-side-bar-body h-0 grow">
       <slot name="body" />
     </ScrollPanel>
+    <slot name="footer" />
   </div>
 </template>
 
 <script setup lang="ts">
 import ScrollPanel from 'primevue/scrollpanel'
 import Toolbar from 'primevue/toolbar'
+
+import { cn } from '@/utils/tailwindUtil'
 
 const props = defineProps<{
   title: string
@@ -38,6 +48,8 @@ const props = defineProps<{
 </script>
 
 <style scoped>
+@reference '../../../assets/css/style.css';
+
 :deep(.p-toolbar-end) .p-button {
   @apply py-1 2xl:py-2;
 }

@@ -1,4 +1,4 @@
-import type { ComfyWorkflowJSON } from '@/schemas/comfyWorkflowSchema'
+import type { ComfyWorkflowJSON } from '@/platform/workflow/validation/schemas/workflowSchema'
 
 export const defaultGraph: ComfyWorkflowJSON = {
   last_node_id: 9,
@@ -132,7 +132,12 @@ export const defaultGraph: ComfyWorkflowJSON = {
   ],
   groups: [],
   config: {},
-  extra: {},
+  extra: {
+    ds: {
+      offset: [0, 0],
+      scale: 1
+    }
+  },
   version: 0.4
 }
 

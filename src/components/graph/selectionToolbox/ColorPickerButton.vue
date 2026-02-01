@@ -1,16 +1,19 @@
 <template>
   <div class="relative">
     <Button
-      severity="secondary"
-      text
+      v-tooltip.top="{
+        value: localizedCurrentColorName ?? t('color.noColor'),
+        showDelay: 1000
+      }"
+      data-testid="color-picker-button"
+      variant="muted-textonly"
+      :aria-label="t('g.color')"
       @click="() => (showColorPicker = !showColorPicker)"
     >
-      <template #icon>
-        <div class="flex items-center gap-1">
-          <i class="pi pi-circle-fill" :style="{ color: currentColor ?? '' }" />
-          <i class="pi pi-chevron-down" :style="{ fontSize: '0.5rem' }" />
-        </div>
-      </template>
+      <div class="flex items-center gap-1 px-0">
+        <i class="pi pi-circle-fill" :style="{ color: currentColor ?? '' }" />
+        <i class="icon-[lucide--chevron-down]" />
+      </div>
     </Button>
     <div
       v-if="showColorPicker"
@@ -39,15 +42,23 @@
 </template>
 
 <script setup lang="ts">
-import type { ColorOption as CanvasColorOption } from '@comfyorg/litegraph'
-import { LGraphCanvas, LiteGraph, isColorable } from '@comfyorg/litegraph'
-import Button from 'primevue/button'
 import SelectButton from 'primevue/selectbutton'
+import type { Raw } from 'vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useCanvasStore } from '@/stores/graphStore'
-import { useWorkflowStore } from '@/stores/workflowStore'
+import Button from '@/components/ui/button/Button.vue'
+import type {
+  ColorOption as CanvasColorOption,
+  Positionable
+} from '@/lib/litegraph/src/litegraph'
+import {
+  LGraphCanvas,
+  LiteGraph,
+  isColorable
+} from '@/lib/litegraph/src/litegraph'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
+import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
 import { useColorPaletteStore } from '@/stores/workspace/colorPaletteStore'
 import { adjustColor } from '@/utils/colorUtil'
 import { getItemsColorOption } from '@/utils/litegraphUtil'
@@ -122,17 +133,34 @@ const currentColor = computed(() =>
     : null
 )
 
+const localizedCurrentColorName = computed(() => {
+  if (!currentColorOption.value?.bgcolor) return null
+  const colorOption = colorOptions.find(
+    (option) =>
+      option.value.dark === currentColorOption.value?.bgcolor ||
+      option.value.light === currentColorOption.value?.bgcolor
+  )
+  return colorOption?.localizedName ?? NO_COLOR_OPTION.localizedName
+})
+const updateColorSelectionFromNode = (
+  newSelectedItems: Raw<Positionable[]>
+) => {
+  showColorPicker.value = false
+  selectedColorOption.value = null
+  currentColorOption.value = getItemsColorOption(newSelectedItems)
+}
 watch(
   () => canvasStore.selectedItems,
   (newSelectedItems) => {
-    showColorPicker.value = false
-    selectedColorOption.value = null
-    currentColorOption.value = getItemsColorOption(newSelectedItems)
-  }
+    updateColorSelectionFromNode(newSelectedItems)
+  },
+  { immediate: true }
 )
 </script>
 
 <style scoped>
+@reference '../../../assets/css/style.css';
+
 .color-picker-container {
   transform: translateX(-50%);
 }

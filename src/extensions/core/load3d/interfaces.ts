@@ -1,27 +1,21 @@
-import { LGraphNode } from '@comfyorg/litegraph'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import { ViewHelper } from 'three/examples/jsm/helpers/ViewHelper'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader'
-import { GLTF, GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
+import { type GLTF, GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader'
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader'
-
-import { CustomInputSpec } from '@/schemas/nodeDef/nodeDefSchemaV2'
-
-export type Load3DNodeType = 'Load3D' | 'Preview3D'
-
-export type Load3DAnimationNodeType = 'Load3DAnimation' | 'Preview3DAnimation'
+import { type OBJLoader2Parallel } from 'wwobjloader2'
 
 export type MaterialMode =
   | 'original'
+  | 'pointCloud'
   | 'normal'
   | 'wireframe'
   | 'depth'
-  | 'lineart'
 export type UpDirection = 'original' | '-x' | '+x' | '-y' | '+y' | '-z' | '+z'
 export type CameraType = 'perspective' | 'orthographic'
+export type BackgroundRenderModeType = 'tiled' | 'panorama'
 
 export interface CameraState {
   position: THREE.Vector3
@@ -30,23 +24,56 @@ export interface CameraState {
   cameraType: CameraType
 }
 
-export interface EventCallback {
-  (data?: any): void
+export interface SceneConfig {
+  showGrid: boolean
+  backgroundColor: string
+  backgroundImage?: string
+  backgroundRenderMode?: BackgroundRenderModeType
+}
+
+export interface ModelConfig {
+  upDirection: UpDirection
+  materialMode: MaterialMode
+  showSkeleton: boolean
+}
+
+export interface CameraConfig {
+  cameraType: CameraType
+  fov: number
+  state?: CameraState
+}
+
+export interface LightConfig {
+  intensity: number
+}
+
+export interface EventCallback<T = unknown> {
+  (data: T): void
 }
 
 export interface Load3DOptions {
-  node?: LGraphNode
-  inputSpec?: CustomInputSpec
+  // Optional target dimensions for aspect ratio control
+  width?: number
+  height?: number
+
+  // Dynamic dimension provider (called on every render)
+  // Use this for reactive dimensions that change over time
+  getDimensions?: () => { width: number; height: number } | null
+
+  // Viewer mode flag (affects aspect ratio behavior)
+  isViewerMode?: boolean
+
+  // Optional context menu callback
+  onContextMenu?: (event: MouseEvent) => void
 }
 
 export interface CaptureResult {
   scene: string
   mask: string
   normal: string
-  lineart: string
 }
 
-export interface BaseManager {
+interface BaseManager {
   init(): void
   dispose(): void
   reset(): void
@@ -64,6 +91,7 @@ export interface SceneManagerInterface extends BaseManager {
   setBackgroundColor(color: string): void
   setBackgroundImage(uploadPath: string): Promise<void>
   removeBackgroundImage(): void
+  setBackgroundRenderMode(mode: BackgroundRenderModeType): void
   handleResize(width: number, height: number): void
   captureScene(width: number, height: number): Promise<CaptureResult>
 }
@@ -99,30 +127,10 @@ export interface ViewHelperManagerInterface extends BaseManager {
   handleResize(): void
 }
 
-export interface PreviewManagerInterface extends BaseManager {
-  previewRenderer: THREE.WebGLRenderer | null
-  previewCamera: THREE.Camera
-  previewContainer: HTMLDivElement
-  showPreview: boolean
-  previewWidth: number
-  createCapturePreview(container: Element | HTMLElement): void
-  updatePreviewSize(): void
-  updatePreviewRender(): void
-  togglePreview(showPreview: boolean): void
-  setTargetSize(width: number, height: number): void
-  handleResize(): void
-  updateBackgroundTexture(texture: THREE.Texture | null): void
-}
-
 export interface EventManagerInterface {
-  addEventListener(event: string, callback: EventCallback): void
-  removeEventListener(event: string, callback: EventCallback): void
-  emitEvent(event: string, data?: any): void
-}
-
-export interface NodeStorageInterface {
-  storeNodeProperty(name: string, value: any): void
-  loadNodeProperty(name: string, defaultValue: any): any
+  addEventListener<T>(event: string, callback: EventCallback<T>): void
+  removeEventListener<T>(event: string, callback: EventCallback<T>): void
+  emitEvent<T>(event: string, data: T): void
 }
 
 export interface AnimationManagerInterface extends BaseManager {
@@ -133,12 +141,18 @@ export interface AnimationManagerInterface extends BaseManager {
   isAnimationPlaying: boolean
   animationSpeed: number
 
-  setupModelAnimations(model: THREE.Object3D, originalModel: any): void
+  setupModelAnimations(
+    model: THREE.Object3D,
+    originalModel: THREE.Object3D | THREE.BufferGeometry | GLTF | null
+  ): void
   updateAnimationList(): void
   setAnimationSpeed(speed: number): void
   updateSelectedAnimation(index: number): void
   toggleAnimation(play?: boolean): void
   update(delta: number): void
+  getAnimationTime(): number
+  getAnimationDuration(): number
+  setAnimationTime(time: number): void
 }
 
 export interface ModelManagerInterface {
@@ -154,6 +168,7 @@ export interface ModelManagerInterface {
   clearModel(): void
   reset(): void
   setupModel(model: THREE.Object3D): Promise<void>
+  addModelToScene(model: THREE.Object3D): void
   setOriginalModel(model: THREE.Object3D | THREE.BufferGeometry | GLTF): void
   setUpDirection(direction: UpDirection): void
   materialMode: MaterialMode
@@ -168,7 +183,7 @@ export interface ModelManagerInterface {
 
 export interface LoaderManagerInterface {
   gltfLoader: GLTFLoader
-  objLoader: OBJLoader
+  objLoader: OBJLoader2Parallel
   mtlLoader: MTLLoader
   fbxLoader: FBXLoader
   stlLoader: STLLoader
@@ -177,3 +192,15 @@ export interface LoaderManagerInterface {
   dispose(): void
   loadModel(url: string, originalFileName?: string): Promise<void>
 }
+
+export const SUPPORTED_EXTENSIONS = new Set([
+  '.gltf',
+  '.glb',
+  '.obj',
+  '.fbx',
+  '.stl',
+  '.spz',
+  '.splat',
+  '.ply',
+  '.ksplat'
+])
